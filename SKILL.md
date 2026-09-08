@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.0"
+version: "0.3.1"
 description: >
   On-demand, read-only review of ChoiceADVANTAGE (SkyTouch) PMS data. Activates
   on any ask to audit, review, check, or pull the ChoiceADVANTAGE guest ledger
@@ -38,9 +38,12 @@ Do not begin an audit when it reports FAIL. Resolve the named dependency, then
 run readiness once more. A SKIP is a live browser/session check that must be
 confirmed during the audit; it is not proof that access works.
 
-Readiness validates the credential JSON structure without printing values,
-property-local timezone guidance, and the installed report-pull skill's
-frontmatter version and login/navigation contract—not merely file existence.
+Readiness validates the credential JSON structure without printing values and
+the installed report-pull skill's login/navigation contract—not merely file
+existence. A helper version is enforced when declared; a versionless legacy
+helper is accepted when its contract is intact. Missing explicit property-local
+timezone guidance is deferred as a live-session check rather than blocking the
+audit.
 
 ## Low-input operating policy
 
