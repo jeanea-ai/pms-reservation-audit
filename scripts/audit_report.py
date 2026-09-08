@@ -12,7 +12,7 @@ Usage:
 Primary renderer is reportlab. If reportlab is not installed, the script
 falls back to an inline-HTML document printed to PDF via headless Chromium.
 
-Report spec schema (all fields optional unless noted otherwise):
+Report spec schema (validated strictly before rendering):
 
 {
   "title": str,                      # e.g. "Guest Ledger & Duplicate Reservation Audit"
@@ -21,6 +21,8 @@ Report spec schema (all fields optional unless noted otherwise):
   "business_date": str,              # optional, ledger business date
   "date_ranges": { "previous_90": str, "next_90": str },   # optional
   "disclaimer": str,                 # read-only statement (recommended)
+  "complete": bool,
+  "audit_features": ["guest_ledger" | "duplicates", ...],
   "completion_warning": str | null,  # shown in red if the review was incomplete
   "sections": [
     {
@@ -46,7 +48,17 @@ fields (the audit skill already requires this).
 import argparse
 import html as _html
 import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
+
+try:
+    from scripts.report_spec import SpecValidationError, validate_report_spec
+except ModuleNotFoundError:  # direct script execution
+    from report_spec import SpecValidationError, validate_report_spec
 
 MONEY_HEADER_TOKENS = {"balance", "amount", "total", "rate", "rooms", "night", "nights", "count", "sum", "$"}
 
@@ -256,7 +268,22 @@ def render_reportlab(spec, out_path):
 # ---------------------------------------------------------------------------
 # HTML + headless Chromium fallback
 # ---------------------------------------------------------------------------
-def render_html_fallback(spec, out_path):
+def find_chromium(environ=None):
+    env = os.environ if environ is None else environ
+    configured = env.get("CHROMIUM_PATH") or env.get("BROWSER_PATH")
+    if configured and Path(configured).is_file():
+        return configured
+    for name in (
+        "chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+        "chrome", "chrome.exe", "msedge", "msedge.exe",
+    ):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def render_html_fallback(spec, out_path, chromium_path=None):
     def esc(s):
         return _html.escape(s or "")
 
@@ -331,22 +358,67 @@ ul {{ margin:3pt 0 3pt 14pt; padding:0; font-size:8.5pt; color:#5A6472; }}
 {lims}
 </body></html>"""
 
-    import os
-    import subprocess
-    import tempfile
-    html_path = os.path.splitext(out_path)[0] + ".html"
-    with open(html_path, "w", encoding="utf-8") as fh:
-        fh.write(html_doc)
-    cmd = [
-        "chromium", "--headless", "--disable-gpu", "--no-pdf-header-footer",
-        f"--print-to-pdf={out_path}", html_path,
-    ]
-    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-        print(f"PDF written to {out_path} (chromium fallback)")
-    else:
-        print(f"Could not generate PDF. An HTML version was written to {html_path}", file=sys.stderr)
-        sys.exit(2)
+    chromium_path = chromium_path or find_chromium()
+    if not chromium_path:
+        raise RuntimeError("no supported Chromium executable was found")
+    out = Path(out_path).resolve()
+    with tempfile.TemporaryDirectory(prefix="choice-audit-html-") as temp_dir:
+        html_path = Path(temp_dir) / "report.html"
+        html_path.write_text(html_doc, encoding="utf-8")
+        cmd = [
+            chromium_path, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+            f"--print-to-pdf={out}", html_path.as_uri(),
+        ]
+        completed = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=90)
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "unknown Chromium error").strip()
+            raise RuntimeError(f"Chromium exited {completed.returncode}: {detail[:300]}")
+    if not _valid_pdf(out):
+        raise RuntimeError("Chromium reported success but did not create a valid PDF")
+
+
+def _valid_pdf(path):
+    candidate = Path(path)
+    if not candidate.is_file() or candidate.stat().st_size < 8:
+        return False
+    with candidate.open("rb") as fh:
+        return fh.read(5) == b"%PDF-"
+
+
+def render_pdf_atomic(spec, out_path, *, reportlab_renderer=render_reportlab,
+                      chromium_renderer=render_html_fallback, chromium_path=None):
+    """Validate and render atomically with one safe retry and no stale success."""
+    validate_report_spec(spec)
+    destination = Path(out_path).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    chromium_path = chromium_path if chromium_path is not None else find_chromium()
+    try:
+        import reportlab  # noqa: F401
+        primary = ("reportlab", lambda tmp: reportlab_renderer(spec, str(tmp)))
+    except ImportError:
+        if not chromium_path:
+            raise RuntimeError("neither reportlab nor a supported Chromium executable is available")
+        primary = ("chromium", lambda tmp: chromium_renderer(spec, str(tmp), chromium_path))
+    fallback = (("chromium", lambda tmp: chromium_renderer(spec, str(tmp), chromium_path))
+                if primary[0] == "reportlab" and chromium_path else primary)
+    failures = []
+    for attempt, (name, renderer) in enumerate((primary, fallback), start=1):
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+        os.close(fd)
+        temporary = Path(temporary_name)
+        temporary.unlink(missing_ok=True)
+        try:
+            renderer(temporary)
+            if not _valid_pdf(temporary):
+                raise RuntimeError(f"{name} did not create a valid PDF")
+            os.replace(temporary, destination)
+            print(f"PDF written to {destination} ({name}, attempt {attempt})")
+            return destination
+        except Exception as exc:  # bounded retry; message is sanitized by the CLI
+            failures.append(f"attempt {attempt} ({name}): {type(exc).__name__}: {exc}")
+        finally:
+            temporary.unlink(missing_ok=True)
+    raise RuntimeError("PDF generation failed after one retry: " + "; ".join(failures))
 
 
 def main():
@@ -360,14 +432,14 @@ def main():
     else:
         with open(args.spec, "r", encoding="utf-8") as fh:
             raw = fh.read()
-    spec = json.loads(raw)
-
     try:
-        import reportlab  # noqa: F401
-        render_reportlab(spec, args.out)
-    except ImportError:
-        render_html_fallback(spec, args.out)
+        spec = validate_report_spec(json.loads(raw))
+        render_pdf_atomic(spec, args.out)
+    except (json.JSONDecodeError, SpecValidationError, OSError, RuntimeError) as exc:
+        print(f"Could not generate PDF: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

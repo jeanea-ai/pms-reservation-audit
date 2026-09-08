@@ -50,13 +50,20 @@ naturally — for example:
 
 - `SKILL.md` — the complete skill definition (trigger description + workflow).
 - `scripts/audit_report.py` — deterministic PDF renderer (reportlab, with a
-  headless-Chromium fallback). Reads a JSON report spec and emits a styled PDF:
+  discovered headless-Chromium fallback). Strictly validates the JSON report
+  spec and atomically publishes a verified PDF after at most two attempts:
 
   ```bash
   python3 scripts/audit_report.py audit_spec.json -o report.pdf
   ```
 - `scripts/readiness.py` — read-only pod preflight for required files, renderer,
-  helper skill, credentials path, property-time rules, and Kolo audit logging.
+  helper skill contract/version, credential JSON structure, property-time rules,
+  and Kolo audit logging. It never displays credential values.
+- `scripts/report_spec.py` — strict required-field, section, table-shape,
+  missing-value, and incomplete-warning validation.
+- `scripts/duplicate_analysis.py` — deterministic inclusive windows,
+  cancellation filtering, identity deduplication, match classification, email
+  category assignment, and counts/totals.
 - `assets/caf15_audit_report.pdf` — approved visual reference for report layout,
   colors, typography, tables, and footers.
 
