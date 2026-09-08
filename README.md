@@ -66,6 +66,9 @@ naturally — for example:
 - `scripts/duplicate_analysis.py` — deterministic inclusive windows,
   cancellation filtering, identity deduplication, match classification, email
   category assignment, and counts/totals.
+- `scripts/audit_pipeline.py` — one post-extraction command that builds the
+  validated spec, runs duplicate analysis, and atomically renders the PDF. It
+  deliberately contains no login, browser, or ChoiceADVANTAGE automation.
 - `assets/caf15_audit_report.pdf` — approved visual reference for report layout,
   colors, typography, tables, and footers.
 
@@ -74,4 +77,10 @@ naturally — for example:
 ```bash
 python3 scripts/readiness.py
 python3 -m unittest discover -s tests
+```
+
+After the existing browser/report-pull automation extracts fresh data:
+
+```bash
+python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json
 ```

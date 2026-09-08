@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.1"
+version: "0.3.2-candidate.1"
 description: >
   On-demand, read-only review of ChoiceADVANTAGE (SkyTouch) PMS data. Activates
   on any ask to audit, review, check, or pull the ChoiceADVANTAGE guest ledger
@@ -68,6 +68,28 @@ parameters, output preferences, or permission to continue read-only work.
   choice. Consolidate non-blocking limitations into the final report.
 - Deliver one consolidated result and its PDF after the accessible work is
   complete.
+
+## Fast execution path
+
+Keep the proven browser workflow and deterministic post-processing separate.
+Run readiness once at the start. Use the `choiceadvantage-report-pull` skill for
+login, navigation, trusted clicks, and fresh report retrieval without changing
+or rediscovering those mechanics during an audit.
+
+As soon as the two reports have been extracted, write one `audit_input.json`
+matching `tests/fixtures/audit_input.json`, then run exactly one command:
+
+`python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json`
+
+That command owns window boundaries, cancellation filtering, reservation
+deduplication, match/category decisions, counts, totals, report-spec validation,
+and atomic PDF generation. Do not reimplement those steps in chat or inspect the
+module interfaces during a live audit. It never opens or controls the browser.
+
+For a browser/report extraction failure, refresh the current page state and make
+one retry using the report-pull skill's tested fallback. If that still fails,
+mark the audit incomplete and ask one actionable question; do not start an
+open-ended sequence of new extraction experiments.
 
 ## Access & authentication (every run)
 

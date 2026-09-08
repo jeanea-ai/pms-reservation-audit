@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "property": "CAF15 — Test Hotel",
+    "reviewed_at": "2026-09-08 12:00 America/Los_Angeles",
+    "business_date": "2026-09-07",
+    "property_local_date": "2026-09-08"
+  },
+  "complete": true,
+  "completion_warning": null,
+  "limitations": [],
+  "guest_ledger": {
+    "completion_statement": "Every Guest Ledger page and required section was reviewed.",
+    "no_shows": [{"guest_name":"Example Guest","folio_number":"F1","account_number":"A1","confirmation_number":"Not displayed.","balance":-10.5}],
+    "groups": [],
+    "notes": []
+  },
+  "reservations": [
+    {"guest_name":"John Smith 1","confirmation_number":"R1","folio_number":"Not displayed.","account_number":"Not displayed.","check_in":"2026-06-10","check_out":"2026-06-12","rooms":1,"primary_email":"john@buildco.com","secondary_email":"Not displayed.","status":"Active"},
+    {"guest_name":"john smith 2","confirmation_number":"R2","folio_number":"Not displayed.","account_number":"Not displayed.","check_in":"2026-06-11","check_out":"2026-06-13","rooms":2,"primary_email":"john@gmail.com","secondary_email":"Not displayed.","status":"Active"}
+  ]
+}
