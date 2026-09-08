@@ -26,6 +26,30 @@ merge, split, create, or otherwise modify reservations, folios, accounts,
 balances, reports, or any other record in ChoiceADVANTAGE. If any step
 would produce or require a write, stop and tell the owner it is out of scope.
 
+## Low-input operating policy
+
+Complete the requested audit with as little owner interaction as possible.
+Proceed automatically whenever the required choice can be resolved safely from
+the active session, saved configuration, current property context, or the
+request itself. Do not ask for routine confirmation, date ranges, report
+parameters, output preferences, or permission to continue read-only work.
+
+- Reuse a valid authenticated session when one exists. Otherwise authenticate
+  with the configured secrets automatically.
+- If exactly one property is available, select it without asking. If multiple
+  properties are available, use a saved default or the active property when it
+  is unambiguous. Ask the owner only when no reliable property choice exists.
+- Use the default Guest Ledger parameters and the fixed duplicate-search
+  windows defined below unless the owner explicitly requests something else.
+- If the owner asks generally to "run the audit" or equivalent, run both the
+  Guest Ledger review and Duplicate reservation review. If the request names
+  only one feature, run only that feature.
+- Do not interrupt the run with progress questions. Ask only when owner action
+  is required for MFA, missing/expired access, or an unresolved property
+  choice. Consolidate non-blocking limitations into the final report.
+- Deliver one consolidated result and its PDF after the accessible work is
+  complete.
+
 ## Access & authentication (every run)
 
 1. Log in to ChoiceADVANTAGE via the `browser` tool — follow the
@@ -38,8 +62,9 @@ would produce or require a write, stop and tell the owner it is out of scope.
 2. If the session prompts for multifactor authentication (MFA) or any other
    security step, pause and let the owner complete it. Do not attempt to
    bypass MFA and never store MFA codes.
-3. If the account exposes multiple hotel properties, **confirm which
-   property** to review before pulling anything. Never assume.
+3. Resolve the property under the low-input policy above. Ask only if multiple
+   properties remain genuinely ambiguous after checking saved and active
+   property context. Never guess between unresolved properties.
 4. Confirm the required reports and reservation records can actually be
    viewed for that property. If a needed report/section/field is missing or
    blocked, note it as "could not access" in the report.
@@ -162,36 +187,90 @@ Do not claim a review completed successfully unless every applicable page,
 date range, and record was actually reviewed. Keep the report scannable; use
 tables where they help.
 
-## PDF report output
+## Required PDF deliverable
 
-After completing a review, deliver a clean, printable PDF alongside the
-chat summary.
+After every completed or partially completed audit, automatically generate and
+deliver a clean, clear, easy-to-read PDF. Do not ask whether the owner wants a
+PDF. If the request covers both audit features, place both in one PDF. If it
+covers only one feature, include only that feature.
 
-1. Assemble the results into a JSON report spec and write it to a temp file
-   (e.g. `/tmp/openclaw/audit_spec.json`). Spec fields:
-   - `title`, `property`, `reviewed_at` (owner-local time with a named zone),
-     `business_date`, `date_ranges` (`previous_90`, `next_90`),
-     `disclaimer`, and `completion_warning` (set only when the review was
-     incomplete).
-   - `sections[]` — each with `heading`, optional `body[]`, optional
-     `tables[]` (each `table_title`, `headers[]`, `rows[][]`, optional
-     `summary`), and optional `notes[]`.
-   - `limitations[]` — rendered as a final "Notes & Limitations" section.
-   - Money values: pass as **floats** (negative = credit; rendered in
-     parentheses and red). Identifiers and dates: pass as **strings**.
-     Missing fields: use the literal string `"Not displayed."` — never
-     blank, never guessed.
-2. Render the PDF:
-   `python3 scripts/audit_report.py <spec.json> -o <report.pdf>`
-   (the script falls back to headless Chromium if reportlab is unavailable).
-3. Deliver the PDF to the owner with the `message` tool (`media` = the local
-   PDF path). On the Kolo channel a plain `MEDIA:` line is not reliably
-   rendered, so use the `message` tool. Keep the file under the workspace.
-4. Tell the owner where the PDF was produced and any sections it omits.
+Use this filename pattern, with unsafe filename characters removed:
+`choiceadvantage-audit-{property}-{YYYY-MM-DD-HHmm}.pdf`.
 
-The PDF must carry the same read-only disclosure and the same
-incompleteness warning, if any, as the chat summary. Never describe the PDF
-as complete unless every applicable page and date range was reviewed.
+### Mandatory report template
+
+Use the same structure and visual style as the approved CAF15 audit report on
+every run. Treat the rules below as the default report template, not as optional
+design suggestions. Do not substitute a different theme or reorganize the
+report unless the owner explicitly asks for a different format.
+
+Use US Letter pages in portrait orientation with a white background and about
+0.5-inch margins. The report may use additional pages when the data requires
+them, but every continuation page must preserve the same styling.
+
+Apply this visual system consistently:
+
+- Dark navy (`#203F68` or the closest supported equivalent) for the main title,
+  table headers, totals, and emphasized summary lines.
+- Teal (`#0B7477` or the closest supported equivalent) for numbered section
+  headings, heading rules, and the read-only notice.
+- Alternating white and very light blue-gray (`#EEF3F8`) table rows with thin,
+  light gray-blue borders.
+- Red for negative balances/credits, formatted with parentheses, such as
+  `($150.50)`. Display positive balances in dark text, such as `$150.50`.
+- A clean sans-serif font throughout. Use a bold 18-20 point main title,
+  14-16 point section headings, 9-10 point body text, and no table text smaller
+  than 8 points.
+
+Build the report in this order:
+
+1. **Title block** - "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation
+   Audit" in dark navy, followed by a thin navy rule.
+2. **Audit metadata** - property code and name, reviewed date/time and named
+   time zone, business date, previous 90-day range, and next 90-day range.
+3. **Read-only notice** - a short teal sentence confirming that no records were
+   modified. If incomplete, place a prominent red **INCOMPLETE AUDIT** warning
+   immediately below this notice.
+4. **1. Guest Ledger Balance Review** - completion statement, No-Show Accounts
+   table and total, Group Accounts table and total, all-account-sections summary
+   when available, and short bullet callouts for notable findings.
+5. **2. Duplicate Reservation Review** - search explanation, then the four
+   duplicate-review sections in their required order. Use compact summary tables
+   for high-volume historical groups and detailed reservation tables for
+   individual matches. Follow each period with a bold navy summary line showing
+   records reviewed, cancellations excluded, groups found, and rooms booked when
+   available. Place possible spelling-variant matches in a separate bullet.
+6. **Notes & Limitations** - teal heading and concise bullets explaining missing
+   emails, incomplete ranges, inaccessible records, or other limitations.
+
+Use the same table conventions throughout:
+
+- Dark navy header row with high-contrast text.
+- Guest Ledger columns: guest/group name, available account identifiers, and
+  balance.
+- Historical duplicate summary columns: guest name, active reservation count,
+  and match strength.
+- Detailed duplicate columns: guest name, available identifiers, arrival,
+  departure, nights when available, rate when available, and rooms.
+- Repeat the table header after every page break. Keep related reservation rows
+  together when practical, wrap long values, and prevent clipping or overlap.
+- Clearly show "None found" for an empty required section instead of omitting
+  the section.
+
+Place `Read-only audit - generated by Kolo` at the lower-left of every page and
+`Page {number}` at the lower-right. Keep footer placement and color consistent.
+Do not include passwords, authentication details, secrets-file paths, or hidden
+system data.
+
+Before delivery, render every PDF page to images and visually inspect it.
+Correct clipped text, overlapping elements, broken tables, blank unintended
+pages, unreadable characters, or inconsistent spacing, then render and check
+again. Do not deliver an unverified PDF.
+
+Attach the verified PDF to the final response and include a short plain-text
+summary of the most important findings. If PDF generation fails after one safe
+retry, deliver the structured text report, clearly state that the PDF could not
+be produced, and do not claim full delivery success.
 
 ## Approvals / logging
 

@@ -31,6 +31,10 @@ chat summary:
   never reuses a prior run's results.
 - **Credential-safe** — credentials are read from the host's secrets file at
   run time; nothing is hardcoded in the skill.
+- **Low-input** — reuses a valid session and an unambiguous active/default
+  property, pausing only for MFA, missing access, or unresolved property choice.
+- **Verified output** — every complete or partial audit produces one PDF that
+  is rendered to images and visually checked before delivery.
 
 ## Usage
 
@@ -51,3 +55,5 @@ naturally — for example:
   ```bash
   python3 scripts/audit_report.py audit_spec.json -o report.pdf
   ```
+- `assets/caf15_audit_report.pdf` — approved visual reference for report layout,
+  colors, typography, tables, and footers.
