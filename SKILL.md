@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.2.0"
+version: "0.3.0"
 description: >
   On-demand, read-only review of ChoiceADVANTAGE (SkyTouch) PMS data. Activates
   on any ask to audit, review, check, or pull the ChoiceADVANTAGE guest ledger
@@ -37,6 +37,10 @@ It changes nothing and prints one PASS, FAIL, or SKIP line per dependency.
 Do not begin an audit when it reports FAIL. Resolve the named dependency, then
 run readiness once more. A SKIP is a live browser/session check that must be
 confirmed during the audit; it is not proof that access works.
+
+Readiness validates the credential JSON structure without printing values,
+property-local timezone guidance, and the installed report-pull skill's
+frontmatter version and login/navigation contract—not merely file existence.
 
 ## Low-input operating policy
 
@@ -121,6 +125,13 @@ Two independent searches, reported separately:
 Use the hotel property's **local** date (see AGENTS.md time rules — never
 resolve "today" from the UTC pod clock). Exclude all **cancelled**
 reservations. Do not double-count a reservation that appears in both windows.
+Pass that explicit local date and the collected reservation records through
+`scripts/duplicate_analysis.py`; its inclusive boundaries, cancellation filter,
+identity deduplication, name matching, email classification, counts, and room
+totals are the reporting source of truth. The previous window is
+`today - 90 days` through `today`, inclusive; the next window is `today`
+through `today + 90 days`, inclusive. A reservation on the shared `today`
+boundary is assigned once, to the previous window.
 
 ### Finding related reservations
 
@@ -206,6 +217,15 @@ deliver a clean, clear, easy-to-read PDF. Do not ask whether the owner wants a
 PDF. If the request covers both audit features, place both in one PDF. If it
 covers only one feature, include only that feature.
 
+Build a strict JSON spec with `complete` (boolean), `audit_features` (one or
+both of `guest_ledger` and `duplicates`), all required metadata, both explicit
+90-day ranges, `completion_warning`, sections, tables, and `limitations`.
+Missing cells must be the literal `Not displayed.`; never use null or an empty
+string. Each table row must have exactly the same number of cells as its unique,
+non-empty headers. The renderer validates required feature sections and tables.
+An incomplete spec must include both a completion warning and at least one
+limitation; a complete spec must not carry a warning.
+
 Use this filename pattern, with unsafe filename characters removed:
 `choiceadvantage-audit-{property}-{YYYY-MM-DD-HHmm}.pdf`.
 
@@ -283,6 +303,12 @@ Attach the verified PDF to the final response and include a short plain-text
 summary of the most important findings. If PDF generation fails after one safe
 retry, deliver the structured text report, clearly state that the PDF could not
 be produced, and do not claim full delivery success.
+
+`scripts/audit_report.py` writes to a unique temporary file, validates the PDF
+signature, and atomically replaces the destination only after success. It makes
+at most two total attempts. A non-zero renderer exit, missing/invalid PDF, or
+exception is failure even if an older destination PDF already exists; never
+deliver that stale file as the current audit.
 
 ## Approvals / logging
 
