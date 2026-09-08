@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from scripts.audit_report import _cell_text, _money, render_html_fallback, render_pdf_atomic
+from scripts.audit_report import _cell_text, _money, render_html_fallback, render_pdf_atomic, verify_pdf_structure
 from scripts.report_spec import SpecValidationError, validate_report_spec
 
 
@@ -94,6 +94,7 @@ class AuditReportTests(unittest.TestCase):
             render_pdf_atomic(valid_spec(180), output, chromium_path=None)
             self.assertGreater(len(PdfReader(str(output)).pages), 1)
             self.assertTrue(output.read_bytes().startswith(b"%PDF-"))
+            self.assertEqual(verify_pdf_structure(output, valid_spec(180)), "pypdf")
 
 
 if __name__ == "__main__":

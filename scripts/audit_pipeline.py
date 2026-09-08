@@ -12,6 +12,7 @@ from datetime import date
 import json
 from pathlib import Path
 import sys
+from time import perf_counter
 from typing import Any
 
 try:
@@ -63,7 +64,7 @@ def _duplicate_rows(groups: list[dict[str, Any]]) -> list[list[Any]]:
             ) or MISSING
             rows.append([
                 _shown(item.get("guest_name")), identifiers, _shown(item.get("check_in")),
-                _shown(item.get("check_out")), _shown(item.get("rooms")), emails,
+                _shown(item.get("check_out")), _shown(item.get("rooms_booked")), emails,
                 f"{group['match_strength']}: {group['match_reason']}",
             ])
     return rows
@@ -72,6 +73,8 @@ def _duplicate_rows(groups: list[dict[str, Any]]) -> list[list[Any]]:
 def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if not isinstance(payload, dict):
         raise ValueError("input root must be a JSON object")
+    if payload.get("schema_version") != 1:
+        raise ValueError("schema_version must be 1")
     metadata = payload.get("metadata")
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be a JSON object")
@@ -109,6 +112,10 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
             raise ValueError("reservations must be an array")
         features.append("duplicates")
         analysis = analyze_duplicates(reservations, today)
+        displayed_emails = sum(
+            1 for item in reservations
+            if any(item.get(key) not in (None, "", MISSING) for key in ("primary_email", "secondary_email"))
+        )
         tables = []
         for window_key, window_label in (("previous_90", "Previous 90 Days"), ("next_90", "Next 90 Days")):
             window = analysis["windows"][window_key]
@@ -123,11 +130,16 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
                         f"{len(selected)} group(s); {sum(g['rooms_total'] for g in selected)} room(s)"
                     ),
                 })
+        duplicate_notes = []
+        if reservations and displayed_emails == 0:
+            duplicate_notes.append(
+                "Email addresses were not displayed by the source report; duplicate-category results are provisional."
+            )
         sections.append({
             "heading": "2. Duplicate Reservation Review",
             "body": ["Cancelled reservations were excluded; duplicate identities and the shared today boundary were counted once."],
             "tables": tables,
-            "notes": [],
+            "notes": duplicate_notes,
         })
 
     if not features:
@@ -160,13 +172,17 @@ def main() -> int:
     parser.add_argument("-o", "--out", required=True, help="final PDF path")
     parser.add_argument("--spec-out", help="optional validated report-spec JSON path")
     args = parser.parse_args()
+    started = perf_counter()
     try:
         payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
         spec, analysis = build_report_spec(payload)
         if args.spec_out:
             Path(args.spec_out).write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         render_pdf_atomic(spec, args.out)
-        summary = {"status": "ok", "features": spec["audit_features"], "complete": spec["complete"]}
+        summary = {
+            "status": "ok", "features": spec["audit_features"], "complete": spec["complete"],
+            "post_processing_ms": round((perf_counter() - started) * 1000),
+        }
         if analysis:
             summary["duplicate_counts"] = analysis["counts"]
         print(json.dumps(summary, sort_keys=True))

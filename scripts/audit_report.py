@@ -385,6 +385,35 @@ def _valid_pdf(path):
         return fh.read(5) == b"%PDF-"
 
 
+def verify_pdf_structure(path, spec):
+    """Perform fast routine QA; reserve visual QA for layout-code changes."""
+    candidate = Path(path)
+    if not _valid_pdf(candidate):
+        raise RuntimeError("renderer did not create a valid PDF")
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return "signature"
+    try:
+        reader = PdfReader(str(candidate))
+        if not reader.pages:
+            raise RuntimeError("rendered PDF has no pages")
+        text = " ".join("\n".join(page.extract_text() or "" for page in reader.pages).split())
+        required = [spec["title"], spec["property"]]
+        required.extend(section["heading"] for section in spec["sections"])
+        missing = [value for value in required if " ".join(value.split()) not in text]
+        if missing:
+            raise RuntimeError("rendered PDF is missing expected text: " + ", ".join(missing))
+        for page in reader.pages:
+            if float(page.mediabox.height) < float(page.mediabox.width):
+                raise RuntimeError("rendered PDF contains a landscape page")
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"rendered PDF could not be structurally verified: {exc}") from exc
+    return "pypdf"
+
+
 def render_pdf_atomic(spec, out_path, *, reportlab_renderer=render_reportlab,
                       chromium_renderer=render_html_fallback, chromium_path=None):
     """Validate and render atomically with one safe retry and no stale success."""
@@ -409,8 +438,7 @@ def render_pdf_atomic(spec, out_path, *, reportlab_renderer=render_reportlab,
         temporary.unlink(missing_ok=True)
         try:
             renderer(temporary)
-            if not _valid_pdf(temporary):
-                raise RuntimeError(f"{name} did not create a valid PDF")
+            verify_pdf_structure(temporary, spec)
             os.replace(temporary, destination)
             print(f"PDF written to {destination} ({name}, attempt {attempt})")
             return destination

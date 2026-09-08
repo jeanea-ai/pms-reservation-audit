@@ -33,8 +33,9 @@ chat summary:
   run time; nothing is hardcoded in the skill.
 - **Low-input** — reuses a valid session and an unambiguous active/default
   property, pausing only for MFA, missing access, or unresolved property choice.
-- **Verified output** — every complete or partial audit produces one PDF that
-  is rendered to images and visually checked before delivery.
+- **Verified output** — every complete or partial audit produces one validated,
+  structurally checked PDF. Full visual QA runs when layout code changes, not
+  during routine data-only audits.
 
 ## Usage
 
@@ -65,7 +66,7 @@ naturally — for example:
   missing-value, and incomplete-warning validation.
 - `scripts/duplicate_analysis.py` — deterministic inclusive windows,
   cancellation filtering, identity deduplication, match classification, email
-  category assignment, and counts/totals.
+  category assignment, strongest-required-link group evidence, and counts/totals.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
   validated spec, runs duplicate analysis, and atomically renders the PDF. It
   deliberately contains no login, browser, or ChoiceADVANTAGE automation.
@@ -84,3 +85,6 @@ After the existing browser/report-pull automation extracts fresh data:
 ```bash
 python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json
 ```
+
+The input is schema version `1`; reservation room counts use `rooms_booked` so
+physical room numbers cannot be mistaken for quantities.

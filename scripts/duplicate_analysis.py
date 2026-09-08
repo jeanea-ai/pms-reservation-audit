@@ -41,7 +41,7 @@ def reservation_identity(reservation: dict[str, Any]) -> tuple[str, str]:
         value = str(reservation.get(key, "")).strip()
         if value and value != "Not displayed.":
             return key, value.casefold()
-    fields = ("guest_name", "check_in", "check_out", "primary_email", "rooms")
+    fields = ("guest_name", "check_in", "check_out", "primary_email", "rooms_booked")
     return "fallback", "|".join(str(reservation.get(k, "")).strip().casefold() for k in fields)
 
 
@@ -115,8 +115,69 @@ def group_category(reservations: Iterable[dict[str, Any]]) -> tuple[str, str]:
     return "Repeat Offenders", "reservations use only personal email addresses or no displayed email"
 
 
+def room_count(reservation: dict[str, Any]) -> int:
+    """Return the explicit booking count; never reinterpret a room number."""
+    if "rooms_booked" not in reservation:
+        raise ValueError("reservation is missing rooms_booked; do not use room_number as a count")
+    value = reservation["rooms_booked"]
+    if isinstance(value, bool):
+        raise ValueError("rooms_booked must be a positive integer")
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("rooms_booked must be a positive integer") from None
+    if str(value).strip() != str(count) or count < 1:
+        raise ValueError("rooms_booked must be a positive integer")
+    return count
+
+
+def _best_connection_evidence(
+    component: list[int], evidence: dict[tuple[int, int], tuple[str, str]]
+) -> tuple[str, str, dict[str, int]]:
+    """Choose the strongest set of links needed to connect a group.
+
+    A redundant fuzzy edge must not downgrade an otherwise exact group. This is
+    Kruskal's minimum spanning tree with exact evidence preferred over
+    normalized evidence, and normalized evidence preferred over possible.
+    """
+    rank = {"exact": 0, "normalized": 1, "possible": 2}
+    parent = {node: node for node in component}
+
+    def find(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    selected: list[tuple[str, str]] = []
+    candidates = [
+        (rank[value[0]], i, j, value)
+        for (i, j), value in evidence.items()
+        if i in parent and j in parent
+    ]
+    for _, i, j, value in sorted(candidates):
+        left, right = find(i), find(j)
+        if left == right:
+            continue
+        parent[right] = left
+        selected.append(value)
+        if len(selected) == len(component) - 1:
+            break
+    if len(selected) != len(component) - 1:
+        raise ValueError("duplicate group evidence is not connected")
+
+    breakdown = {name: sum(1 for strength, _ in selected if strength == name) for name in rank}
+    strength, reason = max(selected, key=lambda value: rank[value[0]])
+    summary = ", ".join(f"{count} {name}" for name, count in breakdown.items() if count)
+    return strength, f"{reason}; required links: {summary}", breakdown
+
+
 def analyze_duplicates(reservations: Iterable[dict[str, Any]], today: date) -> dict[str, Any]:
     source = list(reservations)
+    for item in source:
+        if not isinstance(item, dict):
+            raise ValueError("each reservation must be an object")
+        room_count(item)
     unique = sorted(deduplicate_reservations(source), key=reservation_identity)
     active = [item for item in unique if not is_cancelled(item)]
     windows = inclusive_windows(today)
@@ -142,7 +203,6 @@ def analyze_duplicates(reservations: Iterable[dict[str, Any]], today: date) -> d
                     evidence[(i, j)] = (strength, reason)
         groups = []
         visited: set[int] = set()
-        rank = {"exact": 0, "normalized": 1, "possible": 2}
         for seed in sorted(edges):
             if seed in visited:
                 continue
@@ -152,11 +212,10 @@ def analyze_duplicates(reservations: Iterable[dict[str, Any]], today: date) -> d
                 if node in visited:
                     continue
                 visited.add(node); component.append(node); stack.extend(sorted(edges[node] - visited, reverse=True))
-            pairs = [value for (i, j), value in evidence.items() if i in component and j in component]
-            strength, reason = max(pairs, key=lambda value: rank[value[0]])
+            strength, reason, breakdown = _best_connection_evidence(component, evidence)
             members = [items[index] for index in sorted(component)]
             category, category_reason = group_category(members)
-            rooms = sum(int(item.get("rooms", 0)) for item in members if str(item.get("rooms", "")).isdigit())
-            groups.append({"match_strength": strength, "match_reason": reason, "category": category, "category_reason": category_reason, "reservation_count": len(members), "rooms_total": rooms, "reservations": members})
+            rooms = sum(room_count(item) for item in members)
+            groups.append({"match_strength": strength, "match_reason": reason, "match_breakdown": breakdown, "category": category, "category_reason": category_reason, "reservation_count": len(members), "rooms_total": rooms, "reservations": members})
         output["windows"][window_name] = {"records_reviewed": len(items), "groups_found": len(groups), "rooms_total": sum(g["rooms_total"] for g in groups), "groups": groups}
     return output

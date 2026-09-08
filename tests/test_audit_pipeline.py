@@ -31,6 +31,12 @@ class AuditPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must contain"):
             build_report_spec(payload)
 
+    def test_schema_version_is_required(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload.pop("schema_version")
+        with self.assertRaisesRegex(ValueError, "schema_version must be 1"):
+            build_report_spec(payload)
+
 
 if __name__ == "__main__":
     unittest.main()
