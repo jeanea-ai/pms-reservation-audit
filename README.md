@@ -2,7 +2,8 @@
 
 A read-only audit skill for **ChoiceADVANTAGE (SkyTouch) PMS**, designed to
 run on-demand inside [Kolo](https://kolo.ai) (built on OpenClaw). It performs
-two reviews and reports results in a scannable, structured format:
+two reviews and reports results as a clean, printable **PDF** plus a scannable
+chat summary:
 
 ## Features
 
@@ -16,6 +17,11 @@ two reviews and reports results in a scannable, structured format:
    that appear to belong to the same person (exact / normalized / possible
    matches), and buckets each group into **Duplicates** (company-domain email
    present) or **Repeat Offenders** (personal/no email).
+
+3. **PDF report** — renders every review into a styled, easy-to-read PDF
+   (title/metadata header, sectioned tables, right-aligned currency with
+   negative balances in red, and a read-only disclosure). Generated
+   deterministically via `scripts/audit_report.py`.
 
 ## Key properties
 
@@ -39,3 +45,9 @@ naturally — for example:
 ## Structure
 
 - `SKILL.md` — the complete skill definition (trigger description + workflow).
+- `scripts/audit_report.py` — deterministic PDF renderer (reportlab, with a
+  headless-Chromium fallback). Reads a JSON report spec and emits a styled PDF:
+
+  ```bash
+  python3 scripts/audit_report.py audit_spec.json -o report.pdf
+  ```

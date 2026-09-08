@@ -162,6 +162,37 @@ Do not claim a review completed successfully unless every applicable page,
 date range, and record was actually reviewed. Keep the report scannable; use
 tables where they help.
 
+## PDF report output
+
+After completing a review, deliver a clean, printable PDF alongside the
+chat summary.
+
+1. Assemble the results into a JSON report spec and write it to a temp file
+   (e.g. `/tmp/openclaw/audit_spec.json`). Spec fields:
+   - `title`, `property`, `reviewed_at` (owner-local time with a named zone),
+     `business_date`, `date_ranges` (`previous_90`, `next_90`),
+     `disclaimer`, and `completion_warning` (set only when the review was
+     incomplete).
+   - `sections[]` — each with `heading`, optional `body[]`, optional
+     `tables[]` (each `table_title`, `headers[]`, `rows[][]`, optional
+     `summary`), and optional `notes[]`.
+   - `limitations[]` — rendered as a final "Notes & Limitations" section.
+   - Money values: pass as **floats** (negative = credit; rendered in
+     parentheses and red). Identifiers and dates: pass as **strings**.
+     Missing fields: use the literal string `"Not displayed."` — never
+     blank, never guessed.
+2. Render the PDF:
+   `python3 scripts/audit_report.py <spec.json> -o <report.pdf>`
+   (the script falls back to headless Chromium if reportlab is unavailable).
+3. Deliver the PDF to the owner with the `message` tool (`media` = the local
+   PDF path). On the Kolo channel a plain `MEDIA:` line is not reliably
+   rendered, so use the `message` tool. Keep the file under the workspace.
+4. Tell the owner where the PDF was produced and any sections it omits.
+
+The PDF must carry the same read-only disclosure and the same
+incompleteness warning, if any, as the chat summary. Never describe the PDF
+as complete unless every applicable page and date range was reviewed.
+
 ## Approvals / logging
 
 This skill is read-only — no approval is required under AGENTS.md. Log the
