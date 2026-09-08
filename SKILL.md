@@ -1,5 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
+version: "0.2.0"
 description: >
   On-demand, read-only review of ChoiceADVANTAGE (SkyTouch) PMS data. Activates
   on any ask to audit, review, check, or pull the ChoiceADVANTAGE guest ledger
@@ -25,6 +26,17 @@ run only when the owner asks.
 merge, split, create, or otherwise modify reservations, folios, accounts,
 balances, reports, or any other record in ChoiceADVANTAGE. If any step
 would produce or require a write, stop and tell the owner it is out of scope.
+
+## Readiness
+
+Before the first audit after installation or an environment change, run:
+
+`python3 scripts/readiness.py`
+
+It changes nothing and prints one PASS, FAIL, or SKIP line per dependency.
+Do not begin an audit when it reports FAIL. Resolve the named dependency, then
+run readiness once more. A SKIP is a live browser/session check that must be
+confirmed during the audit; it is not proof that access works.
 
 ## Low-input operating policy
 

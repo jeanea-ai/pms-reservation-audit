@@ -55,5 +55,14 @@ naturally — for example:
   ```bash
   python3 scripts/audit_report.py audit_spec.json -o report.pdf
   ```
+- `scripts/readiness.py` — read-only pod preflight for required files, renderer,
+  helper skill, credentials path, property-time rules, and Kolo audit logging.
 - `assets/caf15_audit_report.pdf` — approved visual reference for report layout,
   colors, typography, tables, and footers.
+
+## Validate
+
+```bash
+python3 scripts/readiness.py
+python3 -m unittest discover -s tests
+```
