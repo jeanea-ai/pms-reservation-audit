@@ -54,15 +54,17 @@ def _check_report_pull(path: Path):
     except OSError:
         return False, "SKILL.md could not be read"
     metadata = _frontmatter(text)
-    version = _version_tuple(metadata.get("version", ""))
+    version_text = metadata.get("version")
+    version = _version_tuple(version_text) if version_text else None
     missing = [token for token in REPORT_PULL_CONTRACT_TOKENS if token not in text]
     if metadata.get("name") != REPORT_PULL_NAME:
         return False, "frontmatter name does not match the report-pull contract"
-    if version is None or version < REPORT_PULL_MIN_VERSION:
-        return False, "version is missing, invalid, or older than 0.1.0"
+    if version_text and (version is None or version < REPORT_PULL_MIN_VERSION):
+        return False, "declared version is invalid or older than 0.1.0"
     if missing:
         return False, "required login/navigation contract markers are missing"
-    return True, f"contract {metadata['name']} version {metadata['version']}"
+    version_detail = f" version {version_text}" if version_text else " (legacy versionless)"
+    return True, f"contract {metadata['name']}{version_detail}"
 
 
 def _check_secrets(path: Path):
@@ -74,13 +76,19 @@ def _check_secrets(path: Path):
         return False, "credentials file is not readable valid JSON"
     if not isinstance(payload, dict):
         return False, "credentials JSON root must be an object"
-    credentials = payload.get("choiceadvantage", payload)
-    if not isinstance(credentials, dict):
-        return False, "choiceadvantage credentials must be an object"
-    username = credentials.get("username") or credentials.get("j_username")
-    password = credentials.get("password") or credentials.get("j_password")
-    if not isinstance(username, str) or not username.strip() or not isinstance(password, str) or not password:
-        return False, "credentials JSON must contain non-empty username and password fields"
+    candidates = [payload.get("choiceadvantage", payload)]
+    candidates.extend(value for value in payload.values() if isinstance(value, dict))
+    valid = False
+    for credentials in candidates:
+        if not isinstance(credentials, dict):
+            continue
+        username = credentials.get("username") or credentials.get("j_username") or credentials.get("pms_username")
+        password = credentials.get("password") or credentials.get("j_password") or credentials.get("pms_password")
+        if isinstance(username, str) and username.strip() and isinstance(password, str) and password:
+            valid = True
+            break
+    if not valid:
+        return False, "credentials JSON must contain a top-level or property-scoped non-empty PMS username and password"
     return True, "valid credential structure (values not displayed)"
 
 
@@ -127,7 +135,9 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
     agents_candidates = [workspace / "AGENTS.md", skill_dir / "AGENTS.md"]
     agents_path = next((p for p in agents_candidates if p.is_file()), agents_candidates[0])
     time_ok, time_detail = _check_timezone_guidance(agents_path)
-    results.append(_result("PASS" if time_ok else "FAIL", "property-local time rules", time_detail))
+    results.append(_result("PASS" if time_ok else "SKIP", "property-local time rules",
+                           time_detail if time_ok else
+                           "confirm the selected property's local timezone during the live audit"))
 
     kolo = shutil.which("kolo")
     if not kolo:

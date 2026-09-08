@@ -19,6 +19,15 @@ class ReadinessTests(unittest.TestCase):
             path.write_text("{}", encoding="utf-8")
             self.assertFalse(_check_secrets(path)[0])
 
+    def test_property_scoped_pms_credentials_are_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".secrets.json"
+            path.write_text(json.dumps({"CAF15": {"pms_username": "alice", "pms_password": "super-secret"}}), encoding="utf-8")
+            ok, detail = _check_secrets(path)
+            self.assertTrue(ok)
+            self.assertNotIn("alice", detail)
+            self.assertNotIn("super-secret", detail)
+
     def test_timezone_guidance_requires_content_not_just_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "AGENTS.md"
@@ -34,6 +43,30 @@ class ReadinessTests(unittest.TestCase):
             self.assertTrue(_check_report_pull(path)[0])
             path.write_text("---\nname: choiceadvantage-report-pull\nversion: 0.0.1\n---\n", encoding="utf-8")
             self.assertFalse(_check_report_pull(path)[0])
+
+    def test_versionless_report_pull_contract_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "SKILL.md"
+            path.write_text("---\nname: choiceadvantage-report-pull\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
+            self.assertTrue(_check_report_pull(path)[0])
+
+    def test_missing_timezone_guidance_is_deferred_not_failed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("skill", encoding="utf-8")
+            (skill / "scripts").mkdir()
+            (skill / "scripts" / "audit_report.py").write_text("", encoding="utf-8")
+            (skill / "assets").mkdir()
+            (skill / "assets" / "caf15_audit_report.pdf").write_bytes(b"%PDF")
+            workspace = skill.parent.parent
+            (workspace / "AGENTS.md").write_text("Generic Kolo instructions.", encoding="utf-8")
+            with patch("scripts.readiness.importlib.util.find_spec", return_value=True), patch("scripts.readiness.shutil.which", return_value="kolo"), patch("scripts.readiness.subprocess.run") as run:
+                run.return_value.returncode = 0
+                run.return_value.stdout = "log-action"
+                run.return_value.stderr = ""
+                results = inspect(skill, {})
+            self.assertIn(("SKIP", "property-local time rules", "confirm the selected property's local timezone during the live audit"), results)
 
     def test_live_access_is_explicitly_deferred(self):
         with tempfile.TemporaryDirectory() as tmp:

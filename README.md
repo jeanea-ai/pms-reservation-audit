@@ -57,8 +57,10 @@ naturally — for example:
   python3 scripts/audit_report.py audit_spec.json -o report.pdf
   ```
 - `scripts/readiness.py` — read-only pod preflight for required files, renderer,
-  helper skill contract/version, credential JSON structure, property-time rules,
-  and Kolo audit logging. It never displays credential values.
+  helper skill contract and optional declared version, top-level or
+  property-scoped credential JSON, property-time rules, and Kolo audit logging.
+  Missing explicit timezone guidance is deferred to the live audit. It never
+  displays credential values.
 - `scripts/report_spec.py` — strict required-field, section, table-shape,
   missing-value, and incomplete-warning validation.
 - `scripts/duplicate_analysis.py` — deterministic inclusive windows,
