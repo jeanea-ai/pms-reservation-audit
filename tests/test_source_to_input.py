@@ -25,6 +25,29 @@ class SourceToInputTests(unittest.TestCase):
             "SAMPLE, RECENT", "SAMPLE, OLD",
         ])
         self.assertEqual(sum(row["balance"] for row in result["cancelled"]), 60.0)
+        self.assertEqual([row["guest_name"] for row in result["groups"]], [
+            "Example Education Foundation", "STURDY CO", "Community Partnership",
+        ])
+        self.assertEqual(sum(row["balance"] for row in result["groups"]), 600.0)
+
+    def test_all_group_accounts_bypass_age_and_balance_filters(self):
+        ledger = self.ledger.replace(
+            "Subtotal Group: 600.00",
+            "Checked Out TEST ZERO GROUP 999999999 1/1/20 1/2/20 0.00\n"
+            "Subtotal Group: 600.00",
+        )
+        payload = build_audit_input(
+            guest_ledger_text=ledger,
+            future_reservation_texts=[],
+            property_local_date="2026-09-08",
+            reviewed_at="2026-09-08 17:00 America/Los_Angeles",
+        )
+        group_rows = payload["guest_ledger"]["balances"][-4:]
+        self.assertEqual([row["check_in"] for row in group_rows], [
+            "2026-04-22", "2026-10-19", "2026-08-01", "2020-01-01",
+        ])
+        self.assertEqual(group_rows[-1]["guest_name"], "TEST ZERO GROUP")
+        self.assertEqual(group_rows[-1]["balance"], 0.0)
 
     def test_guest_ledger_mismatch_fails_closed(self):
         broken = self.ledger.replace("Subtotal Cancelled Accounts: 60.00", "Subtotal Cancelled Accounts: 61.00")
@@ -76,6 +99,7 @@ class SourceToInputTests(unittest.TestCase):
         self.assertEqual(len(payload["reservations"]), 3)
         self.assertEqual([row["guest_name"] for row in payload["guest_ledger"]["balances"]], [
             "SAMPLE, ALPHA", "SAMPLE, BETA", "SAMPLE, RECENT",
+            "Example Education Foundation", "STURDY CO", "Community Partnership",
         ])
         spec, analysis = build_report_spec(payload)
         self.assertEqual(spec["audit_features"], ["guest_ledger", "duplicates"])
@@ -94,3 +118,4 @@ class SourceToInputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
