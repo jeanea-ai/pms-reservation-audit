@@ -8,8 +8,8 @@ chat summary:
 ## Features
 
 1. **Guest Ledger balance review** — pulls a fresh Guest Ledger report and
-   lists only nonzero **No Show** or **Cancelled** accounts with arrivals in
-   the past 30 days.
+   lists nonzero **No Show** or **Cancelled** accounts with arrivals in the past
+   30 days plus every **Group** account regardless of arrival date or balance.
 
 2. **Duplicate reservation review** — pulls one Future Reservation Report from
    local today through the same date next year, excludes cancelled
@@ -102,3 +102,4 @@ python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out repo
 
 The input is schema version `1`; reservation room counts use `rooms_booked` so
 physical room numbers cannot be mistaken for quantities.
+
