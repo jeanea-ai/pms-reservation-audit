@@ -114,7 +114,9 @@ def _name_fragment(line: str) -> str | None:
     return value or None
 
 
-def _parse_ledger_rows(lines: Iterable[str]) -> list[dict[str, Any]]:
+def _parse_ledger_rows(
+    lines: Iterable[str], *, include_zero_balances: bool = False
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     fragments: list[str] = []
@@ -128,7 +130,7 @@ def _parse_ledger_rows(lines: Iterable[str]) -> list[dict[str, Any]]:
                 part for part in [current["guest_name"], *fragments] if part
             )
         current.pop("_had_inline_name", None)
-        if abs(current["balance"]) >= 0.005:
+        if include_zero_balances or abs(current["balance"]) >= 0.005:
             records.append(current)
         current = None
         fragments = []
@@ -185,13 +187,18 @@ def parse_guest_ledger_text(text: str) -> dict[str, Any]:
     no_shows = _parse_ledger_rows(_ledger_section_lines(text, "no_shows"))
     cancelled = _parse_ledger_rows(_ledger_section_lines(text, "other"))
     cancelled = [item for item in cancelled if item["status"] == "Cancelled"]
+    groups = _parse_ledger_rows(
+        _ledger_section_lines(text, "groups"), include_zero_balances=True
+    )
     expected = {
         "No-Show Accounts": _printed_subtotal(text, "No-Show Accounts"),
         "Cancelled Accounts": _printed_subtotal(text, "Cancelled Accounts"),
+        "Group": _printed_subtotal(text, "Group"),
     }
     actual = {
         "No-Show Accounts": round(sum(item["balance"] for item in no_shows), 2),
         "Cancelled Accounts": round(sum(item["balance"] for item in cancelled), 2),
+        "Group": round(sum(item["balance"] for item in groups), 2),
     }
     for label in expected:
         if abs(round(expected[label], 2) - actual[label]) > 0.005:
@@ -203,6 +210,7 @@ def parse_guest_ledger_text(text: str) -> dict[str, Any]:
         "metadata": _metadata(text),
         "no_shows": no_shows,
         "cancelled": cancelled,
+        "groups": groups,
         "printed_subtotals": expected,
     }
 
@@ -387,16 +395,17 @@ def build_audit_input(
     }
     if ledger:
         ledger_start = local_today - timedelta(days=30)
-        recent_balances = [
+        recent_no_show_and_cancelled = [
             item for item in [*ledger["no_shows"], *ledger["cancelled"]]
             if ledger_start <= date.fromisoformat(item["check_in"]) <= local_today
         ]
+        balances = [*recent_no_show_and_cancelled, *ledger["groups"]]
         payload["guest_ledger"] = {
             "completion_statement": (
-                "Every Guest Ledger page was parsed; No-Show and Cancelled subtotals "
-                "reconciled to the printed report."
+                "Every Guest Ledger page was parsed; No-Show, Cancelled, and Group "
+                "subtotals reconciled to the printed report."
             ),
-            "balances": recent_balances,
+            "balances": balances,
             "notes": [],
         }
     if future_reports:
@@ -465,3 +474,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
