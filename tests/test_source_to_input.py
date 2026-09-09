@@ -43,6 +43,21 @@ class SourceToInputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "count mismatch"):
             parse_reservation_activity_text(broken)
 
+    def test_reservation_count_accepts_thousands_separator(self):
+        row = next(
+            line for line in self.activity.splitlines()
+            if line.startswith("1066000001 ")
+        )
+        header = "\n".join(self.activity.splitlines()[:4])
+        high_volume = (
+            f"{header}\n"
+            + "\n".join([row] * 2765)
+            + "\nTotal Reservations: 2,765\nTotal Room Nights: 5,824\n"
+        )
+        result = parse_reservation_activity_text(high_volume)
+        self.assertEqual(len(result["reservations"]), 2765)
+        self.assertEqual(result["printed_total"], 2765)
+
     def test_end_to_end_payload_is_accepted_by_pipeline(self):
         payload = build_audit_input(
             guest_ledger_text=self.ledger,

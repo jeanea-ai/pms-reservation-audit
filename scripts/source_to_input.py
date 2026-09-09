@@ -227,10 +227,10 @@ def parse_reservation_activity_text(text: str) -> dict[str, Any]:
             "secondary_email": MISSING,
             "status": STATUS_CODES.get(status.upper(), status.upper()),
         })
-    total = re.search(r"Total Reservations:\s*(\d+)", text, flags=re.IGNORECASE)
+    total = re.search(r"Total Reservations:\s*([\d,]+)", text, flags=re.IGNORECASE)
     if not total:
         raise ValueError("missing Reservation Activity total")
-    expected = int(total.group(1))
+    expected = int(total.group(1).replace(",", ""))
     if len(reservations) != expected:
         raise ValueError(
             f"Reservation Activity count mismatch: parsed {len(reservations)}, printed {expected}"
