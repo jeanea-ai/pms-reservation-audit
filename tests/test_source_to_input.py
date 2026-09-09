@@ -50,7 +50,12 @@ class SourceToInputTests(unittest.TestCase):
             line for line in self.activity.splitlines()
             if line.lstrip().startswith("1066000001 ")
         )
-        header = "\n".join(self.activity.splitlines()[:3])
+        fixture_lines = self.activity.splitlines()
+        header_end = next(
+            index for index, line in enumerate(fixture_lines)
+            if line.lstrip().startswith("Account ")
+        )
+        header = "\n".join(fixture_lines[:header_end + 1])
         high_volume = (
             f"{header}\n"
             + "\n".join([row] * 2765)

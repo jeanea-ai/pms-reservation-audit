@@ -29,7 +29,7 @@ LEDGER_ROW = re.compile(
 )
 FUTURE_ROW_START = re.compile(r"^\s*(\d{7,12})\b")
 FUTURE_REQUIRED_COLUMNS = (
-    "Account", "Guest Name", "Frequent Traveler", "Arrival", "Departure", "Nights",
+    "Account", "Guest Name", "Traveler", "Arrival", "Departure", "Nights",
 )
 
 
@@ -221,7 +221,7 @@ def _future_column_starts(line: str) -> dict[str, int] | None:
 
 
 def _future_guest_fragment(line: str, columns: dict[str, int]) -> str:
-    return " ".join(line[:columns["Frequent Traveler"]].split())
+    return " ".join(line[:columns["Traveler"]].split())
 
 
 def _future_row(line: str, columns: dict[str, int]) -> dict[str, Any] | None:
@@ -241,7 +241,7 @@ def _future_row(line: str, columns: dict[str, int]) -> dict[str, Any] | None:
         return None
     return {
         "guest_name": " ".join(
-            line[account_match.end():min(columns["Frequent Traveler"], dates[0].start())].split()
+            line[account_match.end():min(columns["Traveler"], dates[0].start())].split()
         ),
         "confirmation_number": MISSING,
         "folio_number": MISSING,
@@ -280,7 +280,7 @@ def parse_future_reservations_text(text: str) -> dict[str, Any]:
         if (
             reservations
             and not FUTURE_ROW_START.match(line)
-            and not line[columns["Frequent Traveler"]:].strip()
+            and not line[columns["Traveler"]:].strip()
         ):
             fragment = _future_guest_fragment(line, columns)
             if (

@@ -1,6 +1,7 @@
 Future Reservations
 Arrival From: 9/8/2026 Arrival To: 9/8/2027 Property Code: TST01 Shift: 2 User: KUser.tst01
-Account      Guest Name              Frequent Traveler  Arrival    Departure  Nights  Rate Plan/Package  Rate    Rate Type  Room  Guarantee
+                                       Frequent                              Rate Plan/Package          Rate Type         Guarantee
+Account      Guest Name              Traveler           Arrival    Departure  Nights  Rate               Rate    Room       Guest Tracking
 1066000001  SAMPLE, ALPHA            GP/LEIS            9/8/26     9/11/26   3       SMFLXM             129.00  BAR        131   VI
 1066000002  SAMPLE, ALPHA                               9/8/26     9/11/26   3       SMFLXM             129.00  BAR        111   VI
 1066000003  ANDRADE /                                   9/9/26     9/10/26   1       SMFLXM             149.00  BAR        226   VI
