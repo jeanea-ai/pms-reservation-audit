@@ -1,12 +1,12 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.2"
+version: "0.3.3-candidate.1"
 description: >
   On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
-  balances, No Shows, Groups, duplicate reservations, repeat guests, and
+  recent No Show and Cancelled balances, duplicate reservations, and
   double bookings. Trigger on natural requests such as "audit my guest
-  ledger", "who owes us money?", "check no-shows and groups", "find duplicate
-  reservations", "check the last 90 days", or "find repeat offenders". Pulls
+  ledger", "who owes us money?", "check no-shows and cancellations", or "find
+  duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 ---
 
@@ -26,16 +26,17 @@ never reuse report data from an earlier run.
    property. Ask only if multiple properties remain ambiguous. Pause for MFA or
    expired access.
 3. Pull the requested fresh report(s) and extract every applicable record. For
-   a full audit pull the Guest Ledger plus separate previous-90 and next-90
-   Reservation Activity reports.
-4. Save the fresh Guest Ledger and both Reservation Activity reports as PDF
+   a full audit pull the Guest Ledger plus one Future Reservation Report whose
+   start date is local today and whose end date is the same calendar date next
+   year (12 months ahead), both inclusive.
+4. Save the fresh Guest Ledger and Future Reservation Report as PDF
    files, then build the versioned input deterministically:
 
-   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --reservation-activity ra-previous.pdf --reservation-activity ra-next.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" -o audit_input.json`
+   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" -o audit_input.json`
 
-   The parser reconciles Guest Ledger subtotals and Reservation Activity row
+   The parser reconciles Guest Ledger subtotals and Future Reservation row
    counts to their printed totals and fails closed on a mismatch. It treats
-   each Reservation Activity line as one room record and never reinterprets a
+   each Future Reservation line as one room record and never reinterprets a
    physical room number as `rooms_booked`.
 5. Run exactly one analysis/render command:
 
@@ -66,59 +67,46 @@ question. Do not begin open-ended browser experiments.
 
 ## Guest Ledger input
 
-Pull a new Guest Ledger with current/default parameters unless the owner names a
-date. Review every page and locate **No Shows** and **Groups**. For every nonzero
-balance collect:
+Pull a new Guest Ledger with current/default parameters. Review every page and
+locate **No-Show Accounts** and **Cancelled Accounts**. Keep only nonzero-balance
+reservations whose arrival date is within the inclusive window from local today
+minus 30 days through local today. Collect guest name, account number, status,
+arrival date, and balance.
 
-- guest or group name;
-- folio, account, and confirmation number when displayed;
-- balance;
-- No Shows or Groups category.
-
-Never invent an identifier. Use `Not displayed.` for unavailable fields. Report
-the entries, count, and subtotal for each section separately. Reconcile the
-extracted subtotals to the printed report subtotals; a mismatch makes the audit
-incomplete.
+Never invent an identifier. Use `Not displayed.` for unavailable fields.
+Reconcile the complete extracted No-Show and Cancelled section subtotals to the
+printed report before applying the 30-day filter; a mismatch makes the audit
+incomplete. Do not include Group, Checked Out, In House, older, or zero-balance
+accounts in the findings.
 
 ## Duplicate-reservation input
 
-Use the property's local date. Pull two searches and keep their source ranges
-explicit:
+Use the property's local date. Pull the **Future Reservation Report** with start
+date set to local today and end date set to the same calendar date next year
+(12 months ahead), inclusive. Do not substitute Reservation Activity reports.
 
-- previous: local today minus 90 days through today, inclusive;
-- next: today through today plus 90 days, inclusive.
-
-Collect each reservation's entered guest name, available identifiers, arrival,
+Collect each reservation's entered guest name, account number, arrival,
 departure, `rooms_booked`, displayed email addresses, and status. Exclude
-cancelled records. The shared-today boundary and duplicate identities are
-counted once by `duplicate_analysis.py`.
+cancelled records. Duplicate identities are counted once by
+`duplicate_analysis.py`.
 
 Matching is deterministic:
 
-- **exact**: entered names are identical;
+- **exact**: entered names are identical and stay dates overlap;
 - **normalized**: names match after case, punctuation, spacing, or trailing
-  number normalization;
-- **possible**: a spelling variant, shared email, or similar name plus matching
-  or overlapping dates provides evidence.
+  number normalization and stay dates overlap;
+- **possible**: a spelling variant or shared email plus overlapping stay dates
+  provides evidence.
 
 Groups use the strongest set of links needed to connect all members. A
 redundant fuzzy link cannot downgrade an otherwise exact group. Possible matches
 must explain their evidence and must never be merged in ChoiceADVANTAGE.
 
-In the report only, consolidate rows when normalized guest name, arrival, and
-departure are all identical. Sum their room counts and retain every displayed
-identifier and email. Different dates and merely possible/fuzzy names remain
-separate. Show match evidence once per group, not once per room row.
-
-Classification:
-
-- **Duplicates**: at least one displayed email uses a company domain.
-- **Repeat Offenders**: displayed emails are personal providers only, or no
-  email is displayed.
-
-When the source report has no email column, retain the required category but
-state that it is provisional and that company-domain classification could not
-be verified.
+In the report, consolidate every detected duplicate group to one row. Show the
+entered guest name(s), every displayed account number, each overlapping stay
+range, total rooms, and match evidence once. Keep folio and confirmation values
+in structured analysis when present, but never display Folio or Confirmation
+columns or labels in the PDF.
 
 ## Completion and output
 
@@ -126,6 +114,11 @@ Every report includes the property, owner-local review time and named zone,
 business date, searched ranges, read-only disclosure, findings, and limitations.
 An incomplete run must carry an `INCOMPLETE AUDIT` warning; a complete run must
 not.
+
+The PDF must preserve the approved CAF15 portrait style and contain no more than
+three pages. If all findings cannot render within three pages, the renderer must
+fail closed instead of silently dropping rows; deliver the structured result and
+state that the PDF page limit was exceeded.
 
 The deterministic renderer keeps the approved CAF15 visual style, validates
 required sections and table shapes, verifies that the output is a readable,

@@ -11,12 +11,11 @@
   "limitations": [],
   "guest_ledger": {
     "completion_statement": "Every Guest Ledger page and required section was reviewed.",
-    "no_shows": [{"guest_name":"Example Guest","folio_number":"F1","account_number":"A1","confirmation_number":"Not displayed.","balance":-10.5}],
-    "groups": [],
+    "balances": [{"guest_name":"Example Guest","status":"No Show","check_in":"2026-08-20","check_out":"2026-08-21","folio_number":"F1","account_number":"A1","confirmation_number":"Not displayed.","balance":-10.5}],
     "notes": []
   },
   "reservations": [
-    {"guest_name":"John Smith 1","confirmation_number":"R1","folio_number":"Not displayed.","account_number":"Not displayed.","check_in":"2026-06-10","check_out":"2026-06-12","rooms_booked":1,"primary_email":"john@buildco.com","secondary_email":"Not displayed.","status":"Active"},
-    {"guest_name":"john smith 2","confirmation_number":"R2","folio_number":"Not displayed.","account_number":"Not displayed.","check_in":"2026-06-11","check_out":"2026-06-13","rooms_booked":2,"primary_email":"john@gmail.com","secondary_email":"Not displayed.","status":"Active"}
+    {"guest_name":"John Smith 1","confirmation_number":"R1","folio_number":"Not displayed.","account_number":"A101","check_in":"2026-10-10","check_out":"2026-10-12","rooms_booked":1,"primary_email":"john@buildco.com","secondary_email":"Not displayed.","status":"Active"},
+    {"guest_name":"john smith 2","confirmation_number":"R2","folio_number":"Not displayed.","account_number":"A102","check_in":"2026-10-11","check_out":"2026-10-13","rooms_booked":2,"primary_email":"john@gmail.com","secondary_email":"Not displayed.","status":"Active"}
   ]
 }

@@ -1,4 +1,4 @@
-Reservation Activity Report
+Future Reservation Report
 Property Name: Test Hotel
 Business Date: 9/8/2026 Property Code: TST01 Shift: 2 User: KUser.tst01
 Account Guest Name Arrive Depart Nights Status Rate Rate Code Type Room Source GTD User Reserve Date

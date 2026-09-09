@@ -12,13 +12,8 @@ FEATURE_SECTIONS = {
     "duplicates": "2. Duplicate Reservation Review",
 }
 FEATURE_TABLES = {
-    "guest_ledger": ("No-Show Accounts", "Group Accounts"),
-    "duplicates": (
-        "Previous 90 Days — Duplicates",
-        "Previous 90 Days — Repeat Offenders",
-        "Next 90 Days — Duplicates",
-        "Next 90 Days — Repeat Offenders",
-    ),
+    "guest_ledger": ("Past 30 Days — No Show / Cancelled Balances",),
+    "duplicates": ("Future 12 Months — Duplicate Reservations",),
 }
 
 
@@ -57,9 +52,13 @@ def validate_report_spec(spec: Any) -> dict[str, Any]:
     if not isinstance(ranges, dict):
         errors.append("date_ranges must be an object")
     else:
-        for key in ("previous_90", "next_90"):
+        for key in ("ledger_past_30", "future_12_months"):
             if not _nonempty_string(ranges.get(key)):
                 errors.append(f"date_ranges.{key} must be a non-empty string")
+
+    max_pages = spec.get("max_pages")
+    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or not 1 <= max_pages <= 3:
+        errors.append("max_pages must be an integer from 1 through 3")
 
     features = spec.get("audit_features")
     if not isinstance(features, list) or not features:

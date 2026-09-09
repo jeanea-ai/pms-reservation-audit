@@ -17,7 +17,8 @@ class AuditPipelineTests(unittest.TestCase):
         self.assertEqual([section["heading"] for section in spec["sections"]], [
             "1. Guest Ledger Balance Review", "2. Duplicate Reservation Review",
         ])
-        self.assertEqual(analysis["windows"]["previous_90"]["groups_found"], 1)
+        self.assertEqual(analysis["windows"]["future_12_months"]["groups_found"], 1)
+        self.assertEqual(spec["max_pages"], 3)
 
     def test_pipeline_is_post_extraction_only(self):
         source = Path("scripts/audit_pipeline.py").read_text(encoding="utf-8")
@@ -41,17 +42,16 @@ class AuditPipelineTests(unittest.TestCase):
         payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
         payload["reservations"][1].update({
             "guest_name": "john-smith 2",
-            "check_in": "2026-06-10",
-            "check_out": "2026-06-12",
+            "check_in": "2026-10-10",
+            "check_out": "2026-10-12",
         })
         _, analysis = build_report_spec(payload)
-        group = analysis["windows"]["previous_90"]["groups"][0]
+        group = analysis["windows"]["future_12_months"]["groups"][0]
         rows = _duplicate_rows([group])
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][4], 3)
-        self.assertIn("Confirmation: R1", rows[0][1])
-        self.assertIn("Confirmation: R2", rows[0][1])
-        self.assertIn("2 reservation record(s) -> 1 guest-stay row(s)", rows[0][6])
+        self.assertEqual(rows[0][3], 3)
+        self.assertEqual(rows[0][1], "A101, A102")
+        self.assertNotIn("Confirmation", " ".join(map(str, rows[0])))
 
 
 if __name__ == "__main__":

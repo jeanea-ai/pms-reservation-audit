@@ -18,11 +18,19 @@ PERSONAL_EMAIL_DOMAINS = {
 CANCELLED_STATUSES = {"cancelled", "canceled", "cancel", "void", "voided"}
 
 
+def _same_date_next_year(value: date) -> date:
+    """Return the same calendar date next year, clamping leap day to Feb 28."""
+    try:
+        return value.replace(year=value.year + 1)
+    except ValueError:
+        return value.replace(year=value.year + 1, day=28)
+
+
 def inclusive_windows(today: date) -> dict[str, tuple[date, date]]:
-    """Return explicit inclusive 90-day lookback/lookahead windows."""
+    """Return the permanent inclusive ledger and future-reservation windows."""
     return {
-        "previous_90": (today - timedelta(days=90), today),
-        "next_90": (today, today + timedelta(days=90)),
+        "ledger_past_30": (today - timedelta(days=30), today),
+        "future_12_months": (today, _same_date_next_year(today)),
     }
 
 
@@ -68,7 +76,9 @@ def _parsed_date(value: Any) -> date | None:
 def _dates_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
     li, lo = _parsed_date(left.get("check_in")), _parsed_date(left.get("check_out"))
     ri, ro = _parsed_date(right.get("check_in")), _parsed_date(right.get("check_out"))
-    return bool(li and lo and ri and ro and max(li, ri) <= min(lo, ro))
+    # Hotel departure dates are exclusive: checkout on another stay's arrival
+    # date is back-to-back, not an overlapping occupied night.
+    return bool(li and lo and ri and ro and max(li, ri) < min(lo, ro))
 
 
 def _emails(reservation: dict[str, Any]) -> set[str]:
@@ -81,6 +91,8 @@ def classify_match(left: dict[str, Any], right: dict[str, Any]) -> tuple[str | N
     right_name = str(right.get("guest_name", "")).strip()
     if not left_name or not right_name:
         return None, "missing guest name"
+    if not _dates_overlap(left, right):
+        return None, "stay dates do not overlap"
     if left_name == right_name:
         return "exact", "guest names are entered identically"
     ln, rn = normalize_name(left_name), normalize_name(right_name)
@@ -94,7 +106,7 @@ def classify_match(left: dict[str, Any], right: dict[str, Any]) -> tuple[str | N
         return "possible", f"guest names are similar ({similarity:.2f})"
     if shared_email:
         return "possible", "reservations share an email address"
-    if similarity >= 0.72 and (same_dates or _dates_overlap(left, right)):
+    if similarity >= 0.72 and same_dates:
         return "possible", "similar guest names have identical or overlapping stay dates"
     return None, "insufficient deterministic evidence"
 
@@ -230,15 +242,14 @@ def analyze_duplicates(reservations: Iterable[dict[str, Any]], today: date) -> d
     unique = sorted(deduplicate_reservations(source), key=reservation_identity)
     active = [item for item in unique if not is_cancelled(item)]
     windows = inclusive_windows(today)
-    by_window: dict[str, list[dict[str, Any]]] = {name: [] for name in windows}
-    assigned: set[tuple[str, str]] = set()
+    by_window: dict[str, list[dict[str, Any]]] = {"future_12_months": []}
     for name, (start, end) in windows.items():
+        if name != "future_12_months":
+            continue
         for item in active:
             arrival = _parsed_date(item.get("check_in"))
-            identity = reservation_identity(item)
-            if arrival and start <= arrival <= end and identity not in assigned:
+            if arrival and start <= arrival <= end:
                 by_window[name].append(item)
-                assigned.add(identity)
 
     output: dict[str, Any] = {"windows": {}, "counts": {"input": len(source), "unique": len(unique), "cancelled_excluded": len(unique) - len(active)}}
     for window_name, items in by_window.items():

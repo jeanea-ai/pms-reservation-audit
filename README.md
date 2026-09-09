@@ -7,18 +7,17 @@ chat summary:
 
 ## Features
 
-1. **Guest Ledger balance review** — pulls a fresh Guest Ledger report,
-   reads the **No Shows** and **Groups** sections directly in-system, and
-   lists every account with an outstanding balance (plus per-section counts
-   and totals).
+1. **Guest Ledger balance review** — pulls a fresh Guest Ledger report and
+   lists only nonzero **No Show** or **Cancelled** accounts with arrivals in
+   the past 30 days.
 
-2. **Duplicate reservation review** — two independent 90-day searches
-   (previous and next), excludes cancelled reservations, flags reservations
-   that appear to belong to the same person (exact / normalized / possible
-   matches), and buckets each group into **Duplicates** (company-domain email
-   present) or **Repeat Offenders** (personal/no email).
+2. **Duplicate reservation review** — pulls one Future Reservation Report from
+   local today through the same date next year, excludes cancelled
+   reservations, and flags overlapping stays that appear to belong to the same
+   person (exact / normalized / possible matches).
 
-3. **PDF report** — renders every review into a styled, easy-to-read PDF
+3. **PDF report** — renders every review into a styled, easy-to-read PDF of no
+   more than three pages
    (title/metadata header, sectioned tables, right-aligned currency with
    negative balances in red, and a read-only disclosure). Generated
    deterministically via `scripts/audit_report.py`.
@@ -65,11 +64,11 @@ naturally — for example:
 - `scripts/report_spec.py` — strict required-field, section, table-shape,
   missing-value, and incomplete-warning validation.
 - `scripts/duplicate_analysis.py` — deterministic inclusive windows,
-  cancellation filtering, identity deduplication, match classification, email
-  category assignment, strongest-required-link group evidence, same-guest/stay
+  cancellation filtering, identity deduplication, overlap-aware match
+  classification, strongest-required-link group evidence, compact group-level
   report consolidation, and counts/totals.
-- `scripts/source_to_input.py` — parses fresh Guest Ledger and Reservation
-  Activity PDFs (or layout-preserving extracted text), reconciles printed
+- `scripts/source_to_input.py` — parses fresh Guest Ledger and Future
+  Reservation PDFs (or layout-preserving extracted text), reconciles printed
   subtotals/counts, and atomically writes schema-versioned `audit_input.json`.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
   validated spec, runs duplicate analysis, and atomically renders the PDF. It
@@ -89,8 +88,7 @@ After the existing browser/report-pull automation downloads fresh reports:
 ```bash
 python3 scripts/source_to_input.py \
   --guest-ledger guest-ledger.pdf \
-  --reservation-activity ra-previous.pdf \
-  --reservation-activity ra-next.pdf \
+  --future-reservations future-reservations.pdf \
   --property-local-date 2026-09-08 \
   --reviewed-at "2026-09-08 17:00 America/Los_Angeles" \
   -o audit_input.json

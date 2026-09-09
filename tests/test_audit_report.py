@@ -17,14 +17,14 @@ def valid_spec(row_count=1):
         "property": "CAF15 — Test Hotel",
         "reviewed_at": "2026-09-08 12:00 America/Los_Angeles",
         "business_date": "2026-09-08",
-        "date_ranges": {"previous_90": "2026-06-10 through 2026-09-08 inclusive", "next_90": "2026-09-08 through 2026-12-07 inclusive"},
+        "date_ranges": {"ledger_past_30": "2026-08-09 through 2026-09-08 inclusive", "future_12_months": "2026-09-08 through 2027-09-08 inclusive"},
+        "max_pages": 3,
         "disclaimer": "Read-only audit; no records were modified.",
         "complete": True,
         "completion_warning": None,
         "audit_features": ["guest_ledger"],
         "sections": [{"heading": "1. Guest Ledger Balance Review", "body": ["All applicable pages were reviewed."], "tables": [
-            {"table_title": "No-Show Accounts", "headers": ["Guest", "Folio", "Balance"], "rows": rows, "summary": "Total"},
-            {"table_title": "Group Accounts", "headers": ["Guest", "Folio", "Balance"], "rows": []},
+            {"table_title": "Past 30 Days — No Show / Cancelled Balances", "headers": ["Guest", "Account", "Balance"], "rows": rows, "summary": "Total"},
         ], "notes": []}],
         "limitations": [],
     }
@@ -84,17 +84,16 @@ class AuditReportTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "exited 9"):
                     render_html_fallback(valid_spec(), output, chromium_path="chromium")
 
-    def test_multi_page_reportlab_render(self):
+    def test_three_page_limit_is_enforced(self):
         try:
             from pypdf import PdfReader
         except ImportError:
             self.skipTest("pypdf unavailable")
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "multi.pdf"
-            render_pdf_atomic(valid_spec(180), output, chromium_path=None)
-            self.assertGreater(len(PdfReader(str(output)).pages), 1)
-            self.assertTrue(output.read_bytes().startswith(b"%PDF-"))
-            self.assertEqual(verify_pdf_structure(output, valid_spec(180)), "pypdf")
+            with self.assertRaisesRegex(RuntimeError, "maximum is 3"):
+                render_pdf_atomic(valid_spec(180), output, chromium_path=None)
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

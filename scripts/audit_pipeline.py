@@ -26,8 +26,8 @@ except ModuleNotFoundError:  # direct script execution
 
 
 MISSING = "Not displayed."
-LEDGER_HEADERS = ["Guest / Group", "Folio", "Account", "Confirmation", "Balance"]
-DUPLICATE_HEADERS = ["Guest", "Identifiers", "Arrival", "Departure", "Rooms", "Emails", "Match"]
+LEDGER_HEADERS = ["Guest", "Status", "Arrival", "Account", "Balance"]
+DUPLICATE_HEADERS = ["Guest(s)", "Account(s)", "Stay", "Rooms", "Match"]
 
 
 def _shown(value: Any) -> Any:
@@ -36,8 +36,8 @@ def _shown(value: Any) -> Any:
 
 def _ledger_rows(entries: list[dict[str, Any]]) -> list[list[Any]]:
     return [[
-        _shown(item.get("guest_name")), _shown(item.get("folio_number")),
-        _shown(item.get("account_number")), _shown(item.get("confirmation_number")),
+        _shown(item.get("guest_name")), _shown(item.get("status")),
+        _shown(item.get("check_in")), _shown(item.get("account_number")),
         _shown(item.get("balance")),
     ] for item in entries]
 
@@ -50,30 +50,14 @@ def _ledger_summary(label: str, entries: list[dict[str, Any]]) -> str:
 def _duplicate_rows(groups: list[dict[str, Any]]) -> list[list[Any]]:
     rows = []
     for group in groups:
-        for index, item in enumerate(group["guest_stays"]):
-            identifiers = "; ".join(
-                f"{label}: {value}"
-                for label, key in (
-                    ("Folio", "folio_numbers"),
-                    ("Account", "account_numbers"),
-                    ("Confirmation", "confirmation_numbers"),
-                )
-                for value in item.get(key, [])
-            ) or MISSING
-            emails = "; ".join(item.get("emails", [])) or MISSING
-            match = "-"
-            if index == 0:
-                match = (
-                    f"{group['match_strength']}: {group['match_reason']}; "
-                    f"{group['reservation_count']} reservation record(s) -> "
-                    f"{group['guest_stay_count']} guest-stay row(s); "
-                    f"{group['rooms_total']} room(s)"
-                )
-            rows.append([
-                _shown(item.get("guest_name")), identifiers, _shown(item.get("check_in")),
-                _shown(item.get("check_out")), _shown(item.get("rooms_booked")), emails,
-                match,
-            ])
+        stays = group["guest_stays"]
+        names = sorted({str(item.get("guest_name") or MISSING) for item in stays})
+        accounts = sorted({value for item in stays for value in item.get("account_numbers", [])})
+        dates = sorted({f"{item.get('check_in')}–{item.get('check_out')}" for item in stays})
+        rows.append([
+            " / ".join(names), ", ".join(accounts) or MISSING, "; ".join(dates),
+            group["rooms_total"], f"{group['match_strength']}: {group['match_reason']}",
+        ])
     return rows
 
 
@@ -95,19 +79,16 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     if ledger is not None:
         if not isinstance(ledger, dict):
             raise ValueError("guest_ledger must be an object")
-        no_shows = ledger.get("no_shows", [])
-        groups = ledger.get("groups", [])
-        if not isinstance(no_shows, list) or not isinstance(groups, list):
-            raise ValueError("guest_ledger.no_shows and guest_ledger.groups must be arrays")
+        balances = ledger.get("balances", [])
+        if not isinstance(balances, list):
+            raise ValueError("guest_ledger.balances must be an array")
         features.append("guest_ledger")
         sections.append({
             "heading": "1. Guest Ledger Balance Review",
             "body": [_shown(ledger.get("completion_statement"))],
             "tables": [
-                {"table_title": "No-Show Accounts", "headers": LEDGER_HEADERS,
-                 "rows": _ledger_rows(no_shows), "summary": _ledger_summary("No Shows", no_shows)},
-                {"table_title": "Group Accounts", "headers": LEDGER_HEADERS,
-                 "rows": _ledger_rows(groups), "summary": _ledger_summary("Groups", groups)},
+                {"table_title": "Past 30 Days — No Show / Cancelled Balances", "headers": LEDGER_HEADERS,
+                 "rows": _ledger_rows(balances), "summary": _ledger_summary("Balances", balances)},
             ],
             "notes": ledger.get("notes", []),
         })
@@ -119,37 +100,23 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
             raise ValueError("reservations must be an array")
         features.append("duplicates")
         analysis = analyze_duplicates(reservations, today)
-        displayed_emails = sum(
-            1 for item in reservations
-            if any(item.get(key) not in (None, "", MISSING) for key in ("primary_email", "secondary_email"))
-        )
-        tables = []
-        for window_key, window_label in (("previous_90", "Previous 90 Days"), ("next_90", "Next 90 Days")):
-            window = analysis["windows"][window_key]
-            for category in ("Duplicates", "Repeat Offenders"):
-                selected = [group for group in window["groups"] if group["category"] == category]
-                tables.append({
-                    "table_title": f"{window_label} — {category}",
-                    "headers": DUPLICATE_HEADERS,
-                    "rows": _duplicate_rows(selected),
-                    "summary": (
-                        f"{window['records_reviewed']} active record(s) reviewed; "
-                        f"{len(selected)} group(s); "
-                        f"{sum(g['reservation_count'] for g in selected)} reservation record(s) -> "
-                        f"{sum(g['guest_stay_count'] for g in selected)} guest-stay row(s); "
-                        f"{sum(g['rooms_total'] for g in selected)} room(s)"
-                    ),
-                })
-        duplicate_notes = []
-        if reservations and displayed_emails == 0:
-            duplicate_notes.append(
-                "Email addresses were not displayed by the source report; duplicate-category results are provisional."
-            )
+        window = analysis["windows"]["future_12_months"]
+        tables = [{
+            "table_title": "Future 12 Months — Duplicate Reservations",
+            "headers": DUPLICATE_HEADERS,
+            "rows": _duplicate_rows(window["groups"]),
+            "summary": (
+                f"{window['records_reviewed']} active record(s) reviewed; "
+                f"{len(window['groups'])} duplicate group(s); "
+                f"{sum(g['reservation_count'] for g in window['groups'])} reservation record(s); "
+                f"{sum(g['rooms_total'] for g in window['groups'])} room(s)"
+            ),
+        }]
         sections.append({
             "heading": "2. Duplicate Reservation Review",
-            "body": ["Cancelled reservations were excluded; duplicate identities and the shared today boundary were counted once."],
+            "body": ["Future Reservation Report only; cancelled reservations were excluded and all displayed duplicate groups have overlapping stays."],
             "tables": tables,
-            "notes": duplicate_notes,
+            "notes": [],
         })
 
     if not features:
@@ -163,8 +130,8 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
         "reviewed_at": metadata.get("reviewed_at"),
         "business_date": metadata.get("business_date", MISSING),
         "date_ranges": {
-            "previous_90": f"{windows['previous_90'][0]} through {windows['previous_90'][1]} inclusive",
-            "next_90": f"{windows['next_90'][0]} through {windows['next_90'][1]} inclusive",
+            "ledger_past_30": f"{windows['ledger_past_30'][0]} through {windows['ledger_past_30'][1]} inclusive",
+            "future_12_months": f"{windows['future_12_months'][0]} through {windows['future_12_months'][1]} inclusive",
         },
         "disclaimer": "Read-only audit; no ChoiceADVANTAGE records were modified.",
         "complete": complete,
@@ -172,6 +139,7 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
         "audit_features": features,
         "sections": sections,
         "limitations": limitations,
+        "max_pages": 3,
     }
     return validate_report_spec(spec), analysis
 

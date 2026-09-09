@@ -8,7 +8,7 @@ module owns only deterministic, local parsing and reconciliation.
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 import re
@@ -73,7 +73,10 @@ def _is_noise(line: str) -> bool:
     value = " ".join(line.split())
     return (
         not value
-        or value in {"Guest Ledger", "Reservation Activity Report"}
+        or value in {
+            "Guest Ledger", "Reservation Activity Report", "Future Reservation Report",
+            "Future Reservations Report",
+        }
         or value.startswith("Business Date:")
         or value.startswith("Date/Time of Printing:")
         or value.startswith("Status Name Account Room Arrival Departure Balance")
@@ -143,11 +146,18 @@ def _parse_ledger_rows(lines: Iterable[str]) -> list[dict[str, Any]]:
             inline_name = " ".join((match.group(2) or "").split())
             name = " ".join([*prefix, inline_name]).strip()
             fragments = []
+            ledger_status = {
+                "no show": "No Show", "checked out": "Checked Out",
+                "cancelled": "Cancelled", "in house": "In House",
+            }[match.group(1).casefold()]
             current = {
                 "guest_name": name,
+                "status": ledger_status,
                 "folio_number": MISSING,
                 "account_number": match.group(3),
                 "confirmation_number": MISSING,
+                "check_in": _iso_date(match.group(5)),
+                "check_out": _iso_date(match.group(6)),
                 "balance": _money(match.group(7)),
                 "_had_inline_name": bool(inline_name),
             }
@@ -174,14 +184,15 @@ def parse_guest_ledger_text(text: str) -> dict[str, Any]:
     if "Guest" not in text or "Ledger" not in text:
         raise ValueError("source is not a Guest Ledger report")
     no_shows = _parse_ledger_rows(_ledger_section_lines(text, "no_shows"))
-    groups = _parse_ledger_rows(_ledger_section_lines(text, "groups"))
+    cancelled = _parse_ledger_rows(_ledger_section_lines(text, "other"))
+    cancelled = [item for item in cancelled if item["status"] == "Cancelled"]
     expected = {
         "No-Show Accounts": _printed_subtotal(text, "No-Show Accounts"),
-        "Group": _printed_subtotal(text, "Group"),
+        "Cancelled Accounts": _printed_subtotal(text, "Cancelled Accounts"),
     }
     actual = {
         "No-Show Accounts": round(sum(item["balance"] for item in no_shows), 2),
-        "Group": round(sum(item["balance"] for item in groups), 2),
+        "Cancelled Accounts": round(sum(item["balance"] for item in cancelled), 2),
     }
     for label in expected:
         if abs(round(expected[label], 2) - actual[label]) > 0.005:
@@ -192,7 +203,7 @@ def parse_guest_ledger_text(text: str) -> dict[str, Any]:
     return {
         "metadata": _metadata(text),
         "no_shows": no_shows,
-        "groups": groups,
+        "cancelled": cancelled,
         "printed_subtotals": expected,
     }
 
@@ -206,9 +217,9 @@ STATUS_CODES = {
 }
 
 
-def parse_reservation_activity_text(text: str) -> dict[str, Any]:
-    if "Reservation Activity Report" not in text:
-        raise ValueError("source is not a Reservation Activity Report")
+def parse_future_reservations_text(text: str) -> dict[str, Any]:
+    if not re.search(r"Future Reservations? Report", text, re.IGNORECASE):
+        raise ValueError("source is not a Future Reservation Report")
     reservations = []
     for line in text.splitlines():
         match = RAR_ROW.match(line)
@@ -229,11 +240,11 @@ def parse_reservation_activity_text(text: str) -> dict[str, Any]:
         })
     total = re.search(r"Total Reservations:\s*([\d,]+)", text, flags=re.IGNORECASE)
     if not total:
-        raise ValueError("missing Reservation Activity total")
+        raise ValueError("missing Future Reservation total")
     expected = int(total.group(1).replace(",", ""))
     if len(reservations) != expected:
         raise ValueError(
-            f"Reservation Activity count mismatch: parsed {len(reservations)}, printed {expected}"
+            f"Future Reservation count mismatch: parsed {len(reservations)}, printed {expected}"
         )
     return {"metadata": _metadata(text), "reservations": reservations, "printed_total": expected}
 
@@ -273,35 +284,35 @@ def _consistent(values: Iterable[str], label: str) -> str | None:
 def build_audit_input(
     *,
     guest_ledger_text: str | None,
-    reservation_activity_texts: Iterable[str],
+    future_reservation_texts: Iterable[str],
     property_local_date: str,
     reviewed_at: str,
     property_name: str | None = None,
     business_date: str | None = None,
 ) -> dict[str, Any]:
-    date.fromisoformat(property_local_date)
+    local_today = date.fromisoformat(property_local_date)
     if not reviewed_at.strip():
         raise ValueError("reviewed_at must include local time and named zone")
     ledger = parse_guest_ledger_text(guest_ledger_text) if guest_ledger_text else None
-    activity = [parse_reservation_activity_text(text) for text in reservation_activity_texts]
-    if ledger is None and not activity:
-        raise ValueError("at least one Guest Ledger or Reservation Activity report is required")
+    future_reports = [parse_future_reservations_text(text) for text in future_reservation_texts]
+    if ledger is None and not future_reports:
+        raise ValueError("at least one Guest Ledger or Future Reservation report is required")
 
-    parsed_sources = ([ledger] if ledger else []) + activity
+    parsed_sources = ([ledger] if ledger else []) + future_reports
     source_metadata = [item["metadata"] for item in parsed_sources]
     source_code = _consistent((item.get("property_code", "") for item in source_metadata), "property code")
     source_name = _consistent((item.get("property_name", "") for item in source_metadata), "property name")
     ledger_business_date = ledger["metadata"].get("business_date") if ledger else None
-    activity_business_date = _consistent(
-        (item["metadata"].get("business_date", "") for item in activity),
-        "Reservation Activity business date",
+    future_business_date = _consistent(
+        (item["metadata"].get("business_date", "") for item in future_reports),
+        "Future Reservation business date",
     )
     resolved_property = property_name or " - ".join(value for value in (source_code, source_name) if value)
     if not resolved_property:
         raise ValueError("property name could not be inferred; pass --property")
     # Guest Ledger normally uses the latest closed business date while the
-    # Reservation Activity report uses the current operating date.
-    resolved_business_date = business_date or ledger_business_date or activity_business_date or MISSING
+    # Future Reservation report uses the current operating date.
+    resolved_business_date = business_date or ledger_business_date or future_business_date or MISSING
     if resolved_business_date != MISSING:
         resolved_business_date = _iso_date(resolved_business_date)
 
@@ -318,21 +329,38 @@ def build_audit_input(
         "limitations": [],
     }
     if ledger:
+        ledger_start = local_today - timedelta(days=30)
+        recent_balances = [
+            item for item in [*ledger["no_shows"], *ledger["cancelled"]]
+            if ledger_start <= date.fromisoformat(item["check_in"]) <= local_today
+        ]
         payload["guest_ledger"] = {
             "completion_statement": (
-                "Every Guest Ledger page was parsed; No-Show and Group subtotals "
+                "Every Guest Ledger page was parsed; No-Show and Cancelled subtotals "
                 "reconciled to the printed report."
             ),
-            "no_shows": ledger["no_shows"],
-            "groups": ledger["groups"],
+            "balances": recent_balances,
             "notes": [],
         }
-    if activity:
+    if future_reports:
+        try:
+            future_end = local_today.replace(year=local_today.year + 1)
+        except ValueError:
+            future_end = local_today.replace(year=local_today.year + 1, day=28)
         payload["reservations"] = [
             reservation
-            for report in activity
+            for report in future_reports
             for reservation in report["reservations"]
         ]
+        outside = [
+            item for item in payload["reservations"]
+            if not local_today <= date.fromisoformat(item["check_in"]) <= future_end
+        ]
+        if outside:
+            raise ValueError(
+                "Future Reservation report contains arrivals outside the required "
+                f"{local_today} through {future_end} inclusive window"
+            )
     return payload
 
 
@@ -342,8 +370,8 @@ def main() -> int:
     )
     parser.add_argument("--guest-ledger", help="fresh Guest Ledger PDF or extracted text")
     parser.add_argument(
-        "--reservation-activity", action="append", default=[],
-        help="fresh Reservation Activity PDF or extracted text; repeat for both windows",
+        "--future-reservations", action="append", default=[],
+        help="fresh Future Reservation Report PDF or extracted text",
     )
     parser.add_argument("--property-local-date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--reviewed-at", required=True, help="owner-local timestamp with named zone")
@@ -354,7 +382,7 @@ def main() -> int:
     try:
         payload = build_audit_input(
             guest_ledger_text=read_report_text(args.guest_ledger) if args.guest_ledger else None,
-            reservation_activity_texts=[read_report_text(path) for path in args.reservation_activity],
+            future_reservation_texts=[read_report_text(path) for path in args.future_reservations],
             property_local_date=args.property_local_date,
             reviewed_at=args.reviewed_at,
             property_name=args.property,
@@ -367,7 +395,7 @@ def main() -> int:
         print(json.dumps({
             "status": "ok",
             "guest_ledger_rows": sum(
-                len(payload.get("guest_ledger", {}).get(key, [])) for key in ("no_shows", "groups")
+                len(payload.get("guest_ledger", {}).get(key, [])) for key in ("balances",)
             ),
             "reservation_rows": len(payload.get("reservations", [])),
             "out": str(destination),

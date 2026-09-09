@@ -19,7 +19,8 @@ Report spec schema (validated strictly before rendering):
   "property": str,                   # e.g. "CAF15 — Casa Via Mar Inn, Ascend Hotel Collection"
   "reviewed_at": str,                # owner-local date/time + zone
   "business_date": str,              # optional, ledger business date
-  "date_ranges": { "previous_90": str, "next_90": str },   # optional
+  "date_ranges": { "ledger_past_30": str, "future_12_months": str },
+  "max_pages": 3,
   "disclaimer": str,                 # read-only statement (recommended)
   "complete": bool,
   "audit_features": ["guest_ledger" | "duplicates", ...],
@@ -140,10 +141,8 @@ def render_reportlab(spec, out_path):
             hl = h.lower()
             if any(t in hl for t in MONEY_HEADER_TOKENS):
                 right[ci] = True
-        if headers == ["Guest", "Identifiers", "Arrival", "Departure", "Rooms", "Emails", "Match"]:
-            # Stable duplicate-table proportions prevent long evidence text
-            # from squeezing names and dates into one-character columns.
-            proportions = [70, 120, 55, 55, 40, 55, 145]
+        if headers == ["Guest(s)", "Account(s)", "Stay", "Rooms", "Match"]:
+            proportions = [105, 100, 120, 40, 185]
             widths = [USABLE * value / sum(proportions) for value in proportions]
         else:
             # column width heuristic from string lengths
@@ -205,10 +204,10 @@ def render_reportlab(spec, out_path):
         if spec.get("business_date"):
             meta.append(("Business date", spec["business_date"]))
         dr = spec.get("date_ranges") or {}
-        if dr.get("previous_90"):
-            meta.append(("Previous 90 days", dr["previous_90"]))
-        if dr.get("next_90"):
-            meta.append(("Next 90 days", dr["next_90"]))
+        if dr.get("ledger_past_30"):
+            meta.append(("Guest Ledger window", dr["ledger_past_30"]))
+        if dr.get("future_12_months"):
+            meta.append(("Future Reservation window", dr["future_12_months"]))
         for label, val in meta:
             if val:
                 f.append(Paragraph(f"<b>{_esc(label)}:</b> {_esc(val)}", st_prop))
@@ -327,8 +326,8 @@ def render_html_fallback(spec, out_path, chromium_path=None):
             ("Property", spec.get("property")),
             ("Reviewed", spec.get("reviewed_at")),
             ("Business date", spec.get("business_date")),
-            ("Previous 90 days", (spec.get("date_ranges") or {}).get("previous_90")),
-            ("Next 90 days", (spec.get("date_ranges") or {}).get("next_90")),
+            ("Guest Ledger window", (spec.get("date_ranges") or {}).get("ledger_past_30")),
+            ("Future Reservation window", (spec.get("date_ranges") or {}).get("future_12_months")),
         ] if v
     )
     warn = f"<div class='warn'>INCOMPLETE AUDIT - {esc(spec.get('completion_warning'))}</div>" if spec.get("completion_warning") else ""
@@ -404,6 +403,10 @@ def verify_pdf_structure(path, spec):
         reader = PdfReader(str(candidate))
         if not reader.pages:
             raise RuntimeError("rendered PDF has no pages")
+        if len(reader.pages) > spec["max_pages"]:
+            raise RuntimeError(
+                f"rendered PDF has {len(reader.pages)} pages; maximum is {spec['max_pages']}"
+            )
         text = " ".join("\n".join(page.extract_text() or "" for page in reader.pages).split())
         required = [spec["title"], spec["property"]]
         required.extend(section["heading"] for section in spec["sections"])
