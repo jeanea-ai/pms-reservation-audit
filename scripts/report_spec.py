@@ -12,7 +12,7 @@ FEATURE_SECTIONS = {
     "duplicates": "2. Duplicate Reservation Review",
 }
 FEATURE_TABLES = {
-    "guest_ledger": ("Past 30 Days — No Show / Cancelled Balances",),
+    "guest_ledger": ("Guest Ledger — Recent No Show / Cancelled + All Groups",),
     "duplicates": ("Future 12 Months — Duplicate Reservations",),
 }
 
@@ -152,3 +152,4 @@ def validate_report_spec(spec: Any) -> dict[str, Any]:
     if errors:
         raise SpecValidationError(errors)
     return spec
+
