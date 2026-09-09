@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""Parse fresh ChoiceADVANTAGE report artifacts into audit_input.json.
+
+The browser/report-pull helper owns authentication and report retrieval. This
+module owns only deterministic, local parsing and reconciliation.
+"""
+
+from __future__ import annotations
+
+import argparse
+from datetime import date, datetime
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any, Iterable
+
+
+MISSING = "Not displayed."
+DATE_TOKEN = r"\d{1,2}/\d{1,2}/\d{2,4}"
+MONEY_TOKEN = r"\(?[\d,]+\.\d{2}\)?"
+LEDGER_ROW = re.compile(
+    rf"^\s*(No Show|Checked Out|Cancelled|In House)\s+"
+    rf"(?:(.*?)\s+)?(\d{{7,12}})\s+(?:(\d{{2,4}})\s+)?"
+    rf"({DATE_TOKEN})\s+({DATE_TOKEN})\s+({MONEY_TOKEN})\s*$",
+    re.IGNORECASE,
+)
+RAR_ROW = re.compile(
+    rf"^\s*(\d{{7,12}})\s+(.+?)\s+({DATE_TOKEN})\s+({DATE_TOKEN})"
+    rf"\s+(\d+)\s+([A-Z])(?:\s+|$)",
+    re.IGNORECASE,
+)
+
+
+def _iso_date(value: str) -> str:
+    text = value.strip()
+    for pattern in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, pattern).date().isoformat()
+        except ValueError:
+            continue
+    raise ValueError(f"unsupported date: {value!r}")
+
+
+def _money(value: str) -> float:
+    text = value.strip().replace(",", "")
+    negative = text.startswith("(") and text.endswith(")")
+    if negative:
+        text = text[1:-1]
+    amount = float(text)
+    return -amount if negative else amount
+
+
+def _metadata(text: str) -> dict[str, str]:
+    patterns = {
+        "property_name": r"Property Name:\s*(.+?)\s*$",
+        "property_code": r"Property Code:\s*([^\s]+)",
+        "business_date": rf"Business Date:\s*({DATE_TOKEN})",
+    }
+    result = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+        if match:
+            result[key] = match.group(1).strip()
+    if "business_date" in result:
+        result["business_date"] = _iso_date(result["business_date"])
+    return result
+
+
+def _is_noise(line: str) -> bool:
+    value = " ".join(line.split())
+    return (
+        not value
+        or value in {"Guest Ledger", "Reservation Activity Report"}
+        or value.startswith("Business Date:")
+        or value.startswith("Date/Time of Printing:")
+        or value.startswith("Status Name Account Room Arrival Departure Balance")
+        or value.startswith("Account Guest Name Arrive Depart Nights Status")
+        or value.startswith("Total Reservations:")
+        or value.startswith("Total Room Nights:")
+    )
+
+
+def _ledger_section_lines(text: str, wanted: str) -> list[str]:
+    section = None
+    output = []
+    headings = {
+        "No-Show Accounts": "no_shows",
+        "Checked Out Accounts": "other",
+        "Cancelled Accounts": "other",
+        "In House Accounts": "other",
+        "Group": "groups",
+    }
+    for raw in text.splitlines():
+        value = " ".join(raw.split())
+        if value in headings:
+            section = headings[value]
+            continue
+        if section == wanted:
+            output.append(raw)
+    return output
+
+
+def _name_fragment(line: str) -> str | None:
+    value = " ".join(line.split())
+    if _is_noise(value) or value.startswith("Subtotal ") or value.startswith("Total For All Accounts:"):
+        return None
+    if re.search(rf"{DATE_TOKEN}|{MONEY_TOKEN}$", value):
+        return None
+    return value or None
+
+
+def _parse_ledger_rows(lines: Iterable[str]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    fragments: list[str] = []
+
+    def finish(attach_fragments: bool) -> None:
+        nonlocal current, fragments
+        if current is None:
+            return
+        if attach_fragments:
+            current["guest_name"] = " ".join(
+                part for part in [current["guest_name"], *fragments] if part
+            )
+        current.pop("_had_inline_name", None)
+        if abs(current["balance"]) >= 0.005:
+            records.append(current)
+        current = None
+        fragments = []
+
+    for raw in lines:
+        match = LEDGER_ROW.match(raw)
+        if match:
+            prefix = fragments
+            if current is not None:
+                had_inline_name = bool(current["_had_inline_name"])
+                finish(attach_fragments=not had_inline_name)
+                if not had_inline_name:
+                    prefix = []
+            inline_name = " ".join((match.group(2) or "").split())
+            name = " ".join([*prefix, inline_name]).strip()
+            fragments = []
+            current = {
+                "guest_name": name,
+                "folio_number": MISSING,
+                "account_number": match.group(3),
+                "confirmation_number": MISSING,
+                "balance": _money(match.group(7)),
+                "_had_inline_name": bool(inline_name),
+            }
+            continue
+        fragment = _name_fragment(raw)
+        if fragment:
+            fragments.append(fragment)
+    finish(attach_fragments=True)
+    return records
+
+
+def _printed_subtotal(text: str, label: str) -> float:
+    match = re.search(
+        rf"Subtotal\s+{re.escape(label)}:\s*({MONEY_TOKEN})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError(f"missing printed {label} subtotal")
+    return _money(match.group(1))
+
+
+def parse_guest_ledger_text(text: str) -> dict[str, Any]:
+    if "Guest" not in text or "Ledger" not in text:
+        raise ValueError("source is not a Guest Ledger report")
+    no_shows = _parse_ledger_rows(_ledger_section_lines(text, "no_shows"))
+    groups = _parse_ledger_rows(_ledger_section_lines(text, "groups"))
+    expected = {
+        "No-Show Accounts": _printed_subtotal(text, "No-Show Accounts"),
+        "Group": _printed_subtotal(text, "Group"),
+    }
+    actual = {
+        "No-Show Accounts": round(sum(item["balance"] for item in no_shows), 2),
+        "Group": round(sum(item["balance"] for item in groups), 2),
+    }
+    for label in expected:
+        if abs(round(expected[label], 2) - actual[label]) > 0.005:
+            raise ValueError(
+                f"{label} subtotal mismatch: parsed {actual[label]:.2f}, "
+                f"printed {expected[label]:.2f}"
+            )
+    return {
+        "metadata": _metadata(text),
+        "no_shows": no_shows,
+        "groups": groups,
+        "printed_subtotals": expected,
+    }
+
+
+STATUS_CODES = {
+    "C": "Cancelled",
+    "I": "In House",
+    "N": "No Show",
+    "O": "Checked Out",
+    "R": "Reserved",
+}
+
+
+def parse_reservation_activity_text(text: str) -> dict[str, Any]:
+    if "Reservation Activity Report" not in text:
+        raise ValueError("source is not a Reservation Activity Report")
+    reservations = []
+    for line in text.splitlines():
+        match = RAR_ROW.match(line)
+        if not match:
+            continue
+        account, guest, arrival, departure, _nights, status = match.groups()
+        reservations.append({
+            "guest_name": " ".join(guest.split()),
+            "confirmation_number": MISSING,
+            "folio_number": MISSING,
+            "account_number": account,
+            "check_in": _iso_date(arrival),
+            "check_out": _iso_date(departure),
+            "rooms_booked": 1,
+            "primary_email": MISSING,
+            "secondary_email": MISSING,
+            "status": STATUS_CODES.get(status.upper(), status.upper()),
+        })
+    total = re.search(r"Total Reservations:\s*(\d+)", text, flags=re.IGNORECASE)
+    if not total:
+        raise ValueError("missing Reservation Activity total")
+    expected = int(total.group(1))
+    if len(reservations) != expected:
+        raise ValueError(
+            f"Reservation Activity count mismatch: parsed {len(reservations)}, printed {expected}"
+        )
+    return {"metadata": _metadata(text), "reservations": reservations, "printed_total": expected}
+
+
+def read_report_text(path: str | Path) -> str:
+    source = Path(path)
+    with source.open("rb") as stream:
+        is_pdf = stream.read(5) == b"%PDF-"
+    if not is_pdf:
+        return source.read_text(encoding="utf-8")
+    converter = shutil.which("pdftotext")
+    if converter:
+        result = subprocess.run(
+            [converter, "-layout", str(source), "-"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return result.stdout
+    try:
+        import pdfplumber  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("PDF parsing requires pdftotext or pdfplumber") from exc
+    with pdfplumber.open(source) as report:
+        return "\n\f\n".join(page.extract_text(layout=True) or "" for page in report.pages)
+
+
+def _consistent(values: Iterable[str], label: str) -> str | None:
+    present = {value for value in values if value}
+    if len(present) > 1:
+        raise ValueError(f"source reports disagree on {label}: {sorted(present)}")
+    return next(iter(present), None)
+
+
+def build_audit_input(
+    *,
+    guest_ledger_text: str | None,
+    reservation_activity_texts: Iterable[str],
+    property_local_date: str,
+    reviewed_at: str,
+    property_name: str | None = None,
+    business_date: str | None = None,
+) -> dict[str, Any]:
+    date.fromisoformat(property_local_date)
+    if not reviewed_at.strip():
+        raise ValueError("reviewed_at must include local time and named zone")
+    ledger = parse_guest_ledger_text(guest_ledger_text) if guest_ledger_text else None
+    activity = [parse_reservation_activity_text(text) for text in reservation_activity_texts]
+    if ledger is None and not activity:
+        raise ValueError("at least one Guest Ledger or Reservation Activity report is required")
+
+    parsed_sources = ([ledger] if ledger else []) + activity
+    source_metadata = [item["metadata"] for item in parsed_sources]
+    source_code = _consistent((item.get("property_code", "") for item in source_metadata), "property code")
+    source_name = _consistent((item.get("property_name", "") for item in source_metadata), "property name")
+    ledger_business_date = ledger["metadata"].get("business_date") if ledger else None
+    activity_business_date = _consistent(
+        (item["metadata"].get("business_date", "") for item in activity),
+        "Reservation Activity business date",
+    )
+    resolved_property = property_name or " - ".join(value for value in (source_code, source_name) if value)
+    if not resolved_property:
+        raise ValueError("property name could not be inferred; pass --property")
+    # Guest Ledger normally uses the latest closed business date while the
+    # Reservation Activity report uses the current operating date.
+    resolved_business_date = business_date or ledger_business_date or activity_business_date or MISSING
+    if resolved_business_date != MISSING:
+        resolved_business_date = _iso_date(resolved_business_date)
+
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "metadata": {
+            "property": resolved_property,
+            "reviewed_at": reviewed_at.strip(),
+            "business_date": resolved_business_date,
+            "property_local_date": property_local_date,
+        },
+        "complete": True,
+        "completion_warning": None,
+        "limitations": [],
+    }
+    if ledger:
+        payload["guest_ledger"] = {
+            "completion_statement": (
+                "Every Guest Ledger page was parsed; No-Show and Group subtotals "
+                "reconciled to the printed report."
+            ),
+            "no_shows": ledger["no_shows"],
+            "groups": ledger["groups"],
+            "notes": [],
+        }
+    if activity:
+        payload["reservations"] = [
+            reservation
+            for report in activity
+            for reservation in report["reservations"]
+        ]
+    return payload
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Parse fresh ChoiceADVANTAGE PDFs/text into validated audit input JSON."
+    )
+    parser.add_argument("--guest-ledger", help="fresh Guest Ledger PDF or extracted text")
+    parser.add_argument(
+        "--reservation-activity", action="append", default=[],
+        help="fresh Reservation Activity PDF or extracted text; repeat for both windows",
+    )
+    parser.add_argument("--property-local-date", required=True, help="YYYY-MM-DD")
+    parser.add_argument("--reviewed-at", required=True, help="owner-local timestamp with named zone")
+    parser.add_argument("--property", help="property label; inferred from reports when omitted")
+    parser.add_argument("--business-date", help="override report business date")
+    parser.add_argument("-o", "--out", required=True, help="audit_input.json destination")
+    args = parser.parse_args()
+    try:
+        payload = build_audit_input(
+            guest_ledger_text=read_report_text(args.guest_ledger) if args.guest_ledger else None,
+            reservation_activity_texts=[read_report_text(path) for path in args.reservation_activity],
+            property_local_date=args.property_local_date,
+            reviewed_at=args.reviewed_at,
+            property_name=args.property,
+            business_date=args.business_date,
+        )
+        destination = Path(args.out)
+        temporary = destination.with_name(f".{destination.name}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        temporary.replace(destination)
+        print(json.dumps({
+            "status": "ok",
+            "guest_ledger_rows": sum(
+                len(payload.get("guest_ledger", {}).get(key, [])) for key in ("no_shows", "groups")
+            ),
+            "reservation_rows": len(payload.get("reservations", [])),
+            "out": str(destination),
+        }, sort_keys=True))
+        return 0
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"Source parser failed: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

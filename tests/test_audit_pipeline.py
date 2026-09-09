@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.audit_pipeline import build_report_spec
+from scripts.audit_pipeline import _duplicate_rows, build_report_spec
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "audit_input.json"
@@ -36,6 +36,22 @@ class AuditPipelineTests(unittest.TestCase):
         payload.pop("schema_version")
         with self.assertRaisesRegex(ValueError, "schema_version must be 1"):
             build_report_spec(payload)
+
+    def test_duplicate_pdf_rows_use_consolidated_stays_and_one_match_note(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload["reservations"][1].update({
+            "guest_name": "john-smith 2",
+            "check_in": "2026-06-10",
+            "check_out": "2026-06-12",
+        })
+        _, analysis = build_report_spec(payload)
+        group = analysis["windows"]["previous_90"]["groups"][0]
+        rows = _duplicate_rows([group])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][4], 3)
+        self.assertIn("Confirmation: R1", rows[0][1])
+        self.assertIn("Confirmation: R2", rows[0][1])
+        self.assertIn("2 reservation record(s) -> 1 guest-stay row(s)", rows[0][6])
 
 
 if __name__ == "__main__":

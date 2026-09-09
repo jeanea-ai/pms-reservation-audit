@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 import unittest
 
-from scripts.duplicate_analysis import analyze_duplicates, classify_match, deduplicate_reservations, email_kind, inclusive_windows, normalize_name, room_count
+from scripts.duplicate_analysis import analyze_duplicates, classify_match, consolidate_guest_stays, deduplicate_reservations, email_kind, inclusive_windows, normalize_name, room_count
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "duplicate_reservations.json"
@@ -62,6 +62,48 @@ class DuplicateAnalysisTests(unittest.TestCase):
                   "room_number": 223, "status": "Active"}
         with self.assertRaisesRegex(ValueError, "missing rooms_booked"):
             analyze_duplicates([record], date(2026, 9, 8))
+
+    def test_same_normalized_guest_and_dates_are_consolidated(self):
+        records = [
+            {"guest_name": "Morgan Lee 1", "account_number": "A1", "confirmation_number": "C1",
+             "check_in": "2026-08-01", "check_out": "2026-08-03", "rooms_booked": 1,
+             "primary_email": "morgan@example.com", "status": "Active"},
+            {"guest_name": "morgan-lee 2", "account_number": "A2", "confirmation_number": "C2",
+             "check_in": "2026-08-01", "check_out": "2026-08-03", "rooms_booked": 2,
+             "secondary_email": "other@example.com", "status": "Active"},
+        ]
+        stays = consolidate_guest_stays(records)
+        self.assertEqual(len(stays), 1)
+        self.assertEqual(stays[0]["rooms_booked"], 3)
+        self.assertEqual(stays[0]["source_reservation_count"], 2)
+        self.assertEqual(stays[0]["account_numbers"], ["A1", "A2"])
+        self.assertEqual(stays[0]["confirmation_numbers"], ["C1", "C2"])
+        self.assertEqual(stays[0]["emails"], ["morgan@example.com", "other@example.com"])
+
+    def test_consolidation_keeps_different_dates_and_fuzzy_names_separate(self):
+        records = [
+            {"guest_name": "Morgan Lee", "account_number": "A1", "check_in": "2026-08-01",
+             "check_out": "2026-08-03", "rooms_booked": 1},
+            {"guest_name": "Morgan Lee", "account_number": "A2", "check_in": "2026-08-02",
+             "check_out": "2026-08-04", "rooms_booked": 1},
+            {"guest_name": "Morgen Lee", "account_number": "A3", "check_in": "2026-08-01",
+             "check_out": "2026-08-03", "rooms_booked": 1},
+        ]
+        stays = consolidate_guest_stays(records)
+        self.assertEqual(len(stays), 3)
+        self.assertEqual(sum(stay["rooms_booked"] for stay in stays), 3)
+
+    def test_analysis_room_total_survives_consolidation(self):
+        records = [
+            {"guest_name": "Morgan Lee", "account_number": f"A{i}",
+             "check_in": "2026-08-01", "check_out": "2026-08-03",
+             "rooms_booked": rooms, "status": "Active"}
+            for i, rooms in enumerate((1, 2, 1), start=1)
+        ]
+        group = analyze_duplicates(records, date(2026, 9, 8))["windows"]["previous_90"]["groups"][0]
+        self.assertEqual((group["reservation_count"], group["guest_stay_count"]), (3, 1))
+        self.assertEqual(group["rooms_total"], 4)
+        self.assertEqual(sum(item["rooms_booked"] for item in group["guest_stays"]), 4)
 
 
 if __name__ == "__main__":

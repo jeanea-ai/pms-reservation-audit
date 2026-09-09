@@ -66,7 +66,11 @@ naturally — for example:
   missing-value, and incomplete-warning validation.
 - `scripts/duplicate_analysis.py` — deterministic inclusive windows,
   cancellation filtering, identity deduplication, match classification, email
-  category assignment, strongest-required-link group evidence, and counts/totals.
+  category assignment, strongest-required-link group evidence, same-guest/stay
+  report consolidation, and counts/totals.
+- `scripts/source_to_input.py` — parses fresh Guest Ledger and Reservation
+  Activity PDFs (or layout-preserving extracted text), reconciles printed
+  subtotals/counts, and atomically writes schema-versioned `audit_input.json`.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
   validated spec, runs duplicate analysis, and atomically renders the PDF. It
   deliberately contains no login, browser, or ChoiceADVANTAGE automation.
@@ -80,7 +84,19 @@ python3 scripts/readiness.py
 python3 -m unittest discover -s tests
 ```
 
-After the existing browser/report-pull automation extracts fresh data:
+After the existing browser/report-pull automation downloads fresh reports:
+
+```bash
+python3 scripts/source_to_input.py \
+  --guest-ledger guest-ledger.pdf \
+  --reservation-activity ra-previous.pdf \
+  --reservation-activity ra-next.pdf \
+  --property-local-date 2026-09-08 \
+  --reviewed-at "2026-09-08 17:00 America/Los_Angeles" \
+  -o audit_input.json
+```
+
+Then analyze and render:
 
 ```bash
 python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json

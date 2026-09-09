@@ -50,22 +50,29 @@ def _ledger_summary(label: str, entries: list[dict[str, Any]]) -> str:
 def _duplicate_rows(groups: list[dict[str, Any]]) -> list[list[Any]]:
     rows = []
     for group in groups:
-        for item in group["reservations"]:
+        for index, item in enumerate(group["guest_stays"]):
             identifiers = "; ".join(
-                f"{label}: {value}" for label, value in (
-                    ("Folio", item.get("folio_number")),
-                    ("Account", item.get("account_number")),
-                    ("Confirmation", item.get("confirmation_number")),
-                ) if value not in (None, "", MISSING)
+                f"{label}: {value}"
+                for label, key in (
+                    ("Folio", "folio_numbers"),
+                    ("Account", "account_numbers"),
+                    ("Confirmation", "confirmation_numbers"),
+                )
+                for value in item.get(key, [])
             ) or MISSING
-            emails = "; ".join(
-                str(value) for value in (item.get("primary_email"), item.get("secondary_email"))
-                if value not in (None, "", MISSING)
-            ) or MISSING
+            emails = "; ".join(item.get("emails", [])) or MISSING
+            match = "-"
+            if index == 0:
+                match = (
+                    f"{group['match_strength']}: {group['match_reason']}; "
+                    f"{group['reservation_count']} reservation record(s) -> "
+                    f"{group['guest_stay_count']} guest-stay row(s); "
+                    f"{group['rooms_total']} room(s)"
+                )
             rows.append([
                 _shown(item.get("guest_name")), identifiers, _shown(item.get("check_in")),
                 _shown(item.get("check_out")), _shown(item.get("rooms_booked")), emails,
-                f"{group['match_strength']}: {group['match_reason']}",
+                match,
             ])
     return rows
 
@@ -127,7 +134,10 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
                     "rows": _duplicate_rows(selected),
                     "summary": (
                         f"{window['records_reviewed']} active record(s) reviewed; "
-                        f"{len(selected)} group(s); {sum(g['rooms_total'] for g in selected)} room(s)"
+                        f"{len(selected)} group(s); "
+                        f"{sum(g['reservation_count'] for g in selected)} reservation record(s) -> "
+                        f"{sum(g['guest_stay_count'] for g in selected)} guest-stay row(s); "
+                        f"{sum(g['rooms_total'] for g in selected)} room(s)"
                     ),
                 })
         duplicate_notes = []

@@ -112,7 +112,14 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
     workspace = skill_dir.parent.parent
     results = []
 
-    for relative in ("SKILL.md", "scripts/audit_report.py", "assets/caf15_audit_report.pdf"):
+    for relative in (
+        "SKILL.md",
+        "scripts/source_to_input.py",
+        "scripts/audit_pipeline.py",
+        "scripts/duplicate_analysis.py",
+        "scripts/audit_report.py",
+        "assets/caf15_audit_report.pdf",
+    ):
         path = skill_dir / relative
         results.append(_result("PASS" if path.is_file() else "FAIL", relative,
                                "present" if path.is_file() else "missing from installed skill"))
@@ -122,6 +129,15 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
     results.append(_result("PASS" if reportlab or chromium else "FAIL", "PDF renderer",
                            "reportlab" if reportlab else "Chromium fallback" if chromium else
                            "install reportlab or Chromium"))
+
+    pdftotext = shutil.which("pdftotext")
+    pdfplumber = importlib.util.find_spec("pdfplumber") is not None
+    results.append(_result(
+        "PASS" if pdftotext or pdfplumber else "FAIL",
+        "PDF text extractor",
+        "pdftotext" if pdftotext else "pdfplumber" if pdfplumber else
+        "install pdftotext or pdfplumber",
+    ))
 
     helper = workspace / "skills" / REPORT_PULL_NAME / "SKILL.md"
     helper_ok, helper_detail = _check_report_pull(helper)

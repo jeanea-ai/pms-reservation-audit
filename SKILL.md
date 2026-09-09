@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.2-candidate.2"
+version: "0.3.2-candidate.3"
 description: >
   On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   balances, No Shows, Groups, duplicate reservations, repeat guests, and
@@ -28,10 +28,16 @@ never reuse report data from an earlier run.
 3. Pull the requested fresh report(s) and extract every applicable record. For
    a full audit pull the Guest Ledger plus separate previous-90 and next-90
    Reservation Activity reports.
-4. Write one versioned `audit_input.json` matching
-   `tests/fixtures/audit_input.json`. Use `rooms_booked` for the number of rooms;
-   never put a physical `room_number` in that field.
-5. Run exactly one post-extraction command:
+4. Save the fresh Guest Ledger and both Reservation Activity reports as PDF
+   files, then build the versioned input deterministically:
+
+   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --reservation-activity ra-previous.pdf --reservation-activity ra-next.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" -o audit_input.json`
+
+   The parser reconciles Guest Ledger subtotals and Reservation Activity row
+   counts to their printed totals and fails closed on a mismatch. It treats
+   each Reservation Activity line as one room record and never reinterprets a
+   physical room number as `rooms_booked`.
+5. Run exactly one analysis/render command:
 
    `python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json`
 
@@ -98,6 +104,11 @@ Matching is deterministic:
 Groups use the strongest set of links needed to connect all members. A
 redundant fuzzy link cannot downgrade an otherwise exact group. Possible matches
 must explain their evidence and must never be merged in ChoiceADVANTAGE.
+
+In the report only, consolidate rows when normalized guest name, arrival, and
+departure are all identical. Sum their room counts and retain every displayed
+identifier and email. Different dates and merely possible/fuzzy names remain
+separate. Show match evidence once per group, not once per room row.
 
 Classification:
 

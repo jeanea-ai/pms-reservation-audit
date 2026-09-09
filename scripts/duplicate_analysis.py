@@ -131,6 +131,55 @@ def room_count(reservation: dict[str, Any]) -> int:
     return count
 
 
+def _unique_displayed_values(
+    reservations: Iterable[dict[str, Any]], *keys: str
+) -> list[str]:
+    values = {
+        str(item.get(key, "")).strip()
+        for item in reservations
+        for key in keys
+        if item.get(key) not in (None, "", "Not displayed.")
+    }
+    return sorted(values, key=lambda value: (value.casefold(), value))
+
+
+def consolidate_guest_stays(reservations: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse room-level records only when guest and stay dates agree.
+
+    This is a reporting transformation, not a broader duplicate match. Fuzzy
+    names and different date ranges remain separate even when they belong to
+    the same duplicate-analysis group.
+    """
+    buckets: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in reservations:
+        key = (
+            normalize_name(str(item.get("guest_name", ""))),
+            str(item.get("check_in", "")).strip(),
+            str(item.get("check_out", "")).strip(),
+        )
+        buckets[key].append(item)
+
+    stays = []
+    for key in sorted(buckets):
+        members = sorted(buckets[key], key=reservation_identity)
+        names = _unique_displayed_values(members, "guest_name")
+        stays.append({
+            "guest_name": min(names, key=lambda value: (len(value), value.casefold(), value))
+            if names else "Not displayed.",
+            "entered_guest_names": names,
+            "check_in": key[1] or "Not displayed.",
+            "check_out": key[2] or "Not displayed.",
+            "rooms_booked": sum(room_count(item) for item in members),
+            "source_reservation_count": len(members),
+            "folio_numbers": _unique_displayed_values(members, "folio_number"),
+            "account_numbers": _unique_displayed_values(members, "account_number"),
+            "confirmation_numbers": _unique_displayed_values(members, "confirmation_number"),
+            "emails": _unique_displayed_values(members, "primary_email", "secondary_email"),
+            "statuses": _unique_displayed_values(members, "status"),
+        })
+    return stays
+
+
 def _best_connection_evidence(
     component: list[int], evidence: dict[tuple[int, int], tuple[str, str]]
 ) -> tuple[str, str, dict[str, int]]:
@@ -216,6 +265,7 @@ def analyze_duplicates(reservations: Iterable[dict[str, Any]], today: date) -> d
             members = [items[index] for index in sorted(component)]
             category, category_reason = group_category(members)
             rooms = sum(room_count(item) for item in members)
-            groups.append({"match_strength": strength, "match_reason": reason, "match_breakdown": breakdown, "category": category, "category_reason": category_reason, "reservation_count": len(members), "rooms_total": rooms, "reservations": members})
+            guest_stays = consolidate_guest_stays(members)
+            groups.append({"match_strength": strength, "match_reason": reason, "match_breakdown": breakdown, "category": category, "category_reason": category_reason, "reservation_count": len(members), "guest_stay_count": len(guest_stays), "rooms_total": rooms, "reservations": members, "guest_stays": guest_stays})
         output["windows"][window_name] = {"records_reviewed": len(items), "groups_found": len(groups), "rooms_total": sum(g["rooms_total"] for g in groups), "groups": groups}
     return output

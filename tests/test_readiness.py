@@ -56,7 +56,8 @@ class ReadinessTests(unittest.TestCase):
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text("skill", encoding="utf-8")
             (skill / "scripts").mkdir()
-            (skill / "scripts" / "audit_report.py").write_text("", encoding="utf-8")
+            for name in ("source_to_input.py", "audit_pipeline.py", "duplicate_analysis.py", "audit_report.py"):
+                (skill / "scripts" / name).write_text("", encoding="utf-8")
             (skill / "assets").mkdir()
             (skill / "assets" / "caf15_audit_report.pdf").write_bytes(b"%PDF")
             workspace = skill.parent.parent

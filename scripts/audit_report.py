@@ -140,13 +140,19 @@ def render_reportlab(spec, out_path):
             hl = h.lower()
             if any(t in hl for t in MONEY_HEADER_TOKENS):
                 right[ci] = True
-        # column width heuristic from string lengths
-        maxlen = [max([len(headers[ci])] + [len(_cell_text(r[ci])) for r in norm_rows]) for ci in range(num_cols)]
-        total = sum(maxlen) or 1
-        widths = [max(32.0, USABLE * (ml / total)) for ml in maxlen]
-        # renormalize to usable width
-        wtotal = sum(widths)
-        widths = [w * USABLE / wtotal for w in widths]
+        if headers == ["Guest", "Identifiers", "Arrival", "Departure", "Rooms", "Emails", "Match"]:
+            # Stable duplicate-table proportions prevent long evidence text
+            # from squeezing names and dates into one-character columns.
+            proportions = [70, 120, 55, 55, 40, 55, 145]
+            widths = [USABLE * value / sum(proportions) for value in proportions]
+        else:
+            # column width heuristic from string lengths
+            maxlen = [max([len(headers[ci])] + [len(_cell_text(r[ci])) for r in norm_rows]) for ci in range(num_cols)]
+            total = sum(maxlen) or 1
+            widths = [max(32.0, USABLE * (ml / total)) for ml in maxlen]
+            # renormalize to usable width
+            wtotal = sum(widths)
+            widths = [w * USABLE / wtotal for w in widths]
 
         def cell(v, ci, bold=False):
             style = st_cell_bold if bold else st_cell
