@@ -87,7 +87,7 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
             "heading": "1. Guest Ledger Balance Review",
             "body": [_shown(ledger.get("completion_statement"))],
             "tables": [
-                {"table_title": "Past 30 Days — No Show / Cancelled Balances", "headers": LEDGER_HEADERS,
+                {"table_title": "Guest Ledger — Recent No Show / Cancelled + All Groups", "headers": LEDGER_HEADERS,
                  "rows": _ledger_rows(balances), "summary": _ledger_summary("Balances", balances)},
             ],
             "notes": ledger.get("notes", []),
@@ -172,3 +172,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
