@@ -31,11 +31,13 @@ class SourceToInputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "subtotal mismatch"):
             parse_guest_ledger_text(broken)
 
-    def test_future_reservation_rows_and_cancelled_status(self):
+    def test_real_future_reservation_layout_and_wrapped_name(self):
         result = parse_future_reservations_text(self.activity)
         self.assertEqual(len(result["reservations"]), 3)
         self.assertEqual(result["reservations"][0]["check_in"], "2026-09-08")
-        self.assertEqual(result["reservations"][2]["status"], "Cancelled")
+        self.assertEqual(result["reservations"][0]["guest_name"], "SAMPLE, ALPHA")
+        self.assertEqual(result["reservations"][2]["guest_name"], "ANDRADE / PATRON,ELIZABETH")
+        self.assertTrue(all(row["status"] == "Reserved" for row in result["reservations"]))
         self.assertTrue(all(row["rooms_booked"] == 1 for row in result["reservations"]))
 
     def test_reservation_count_mismatch_fails_closed(self):
@@ -46,9 +48,9 @@ class SourceToInputTests(unittest.TestCase):
     def test_reservation_count_accepts_thousands_separator(self):
         row = next(
             line for line in self.activity.splitlines()
-            if line.startswith("1066000001 ")
+            if line.lstrip().startswith("1066000001 ")
         )
-        header = "\n".join(self.activity.splitlines()[:4])
+        header = "\n".join(self.activity.splitlines()[:3])
         high_volume = (
             f"{header}\n"
             + "\n".join([row] * 2765)
@@ -65,17 +67,17 @@ class SourceToInputTests(unittest.TestCase):
             property_local_date="2026-09-08",
             reviewed_at="2026-09-08 17:00 America/Los_Angeles",
         )
-        self.assertEqual(payload["metadata"]["property"], "TST01 - Test Hotel")
+        self.assertEqual(payload["metadata"]["property"], "TST01")
         self.assertEqual(len(payload["reservations"]), 3)
         self.assertEqual([row["guest_name"] for row in payload["guest_ledger"]["balances"]], [
             "SAMPLE, ALPHA", "SAMPLE, BETA", "SAMPLE, RECENT",
         ])
         spec, analysis = build_report_spec(payload)
         self.assertEqual(spec["audit_features"], ["guest_ledger", "duplicates"])
-        self.assertEqual(analysis["counts"]["cancelled_excluded"], 1)
+        self.assertEqual(analysis["counts"]["cancelled_excluded"], 0)
 
     def test_future_report_outside_required_year_fails_closed(self):
-        outside = self.activity.replace("9/9/26 9/10/26", "9/9/28 9/10/28")
+        outside = self.activity.replace("9/9/26     9/10/26", "9/9/28     9/10/28")
         with self.assertRaisesRegex(ValueError, "outside the required"):
             build_audit_input(
                 guest_ledger_text=self.ledger,

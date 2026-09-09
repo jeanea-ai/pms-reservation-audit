@@ -85,9 +85,11 @@ Use the property's local date. Pull the **Future Reservation Report** with start
 date set to local today and end date set to the same calendar date next year
 (12 months ahead), inclusive. Do not substitute Reservation Activity reports.
 
-Collect each reservation's entered guest name, account number, arrival,
-departure, `rooms_booked`, displayed email addresses, and status. Exclude
-cancelled records. Duplicate identities are counted once by
+Collect each reservation's entered guest name, account number, arrival and
+departure. The Future Reservations report does not display email addresses or
+reservation status; the parser records those fields as unavailable and treats
+each listed row as reserved future inventory. It treats every physical report
+row as one booked room. Duplicate identities are counted once by
 `duplicate_analysis.py`.
 
 Matching is deterministic:

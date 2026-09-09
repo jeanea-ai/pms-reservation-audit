@@ -27,10 +27,9 @@ LEDGER_ROW = re.compile(
     rf"({DATE_TOKEN})\s+({DATE_TOKEN})\s+({MONEY_TOKEN})\s*$",
     re.IGNORECASE,
 )
-RAR_ROW = re.compile(
-    rf"^\s*(\d{{7,12}})\s+(.+?)\s+({DATE_TOKEN})\s+({DATE_TOKEN})"
-    rf"\s+(\d+)\s+([A-Z])(?:\s+|$)",
-    re.IGNORECASE,
+FUTURE_ROW_START = re.compile(r"^\s*(\d{7,12})\b")
+FUTURE_REQUIRED_COLUMNS = (
+    "Account", "Guest Name", "Frequent Traveler", "Arrival", "Departure", "Nights",
 )
 
 
@@ -75,7 +74,7 @@ def _is_noise(line: str) -> bool:
         not value
         or value in {
             "Guest Ledger", "Reservation Activity Report", "Future Reservation Report",
-            "Future Reservations Report",
+            "Future Reservations Report", "Future Reservations",
         }
         or value.startswith("Business Date:")
         or value.startswith("Date/Time of Printing:")
@@ -208,36 +207,94 @@ def parse_guest_ledger_text(text: str) -> dict[str, Any]:
     }
 
 
-STATUS_CODES = {
-    "C": "Cancelled",
-    "I": "In House",
-    "N": "No Show",
-    "O": "Checked Out",
-    "R": "Reserved",
-}
+def _future_column_starts(line: str) -> dict[str, int] | None:
+    """Return fixed-width column starts from a real Future Reservations header."""
+    starts: dict[str, int] = {}
+    search_from = 0
+    for label in FUTURE_REQUIRED_COLUMNS:
+        position = line.find(label, search_from)
+        if position < 0:
+            return None
+        starts[label] = position
+        search_from = position + len(label)
+    return starts
+
+
+def _future_guest_fragment(line: str, columns: dict[str, int]) -> str:
+    return " ".join(line[:columns["Frequent Traveler"]].split())
+
+
+def _future_row(line: str, columns: dict[str, int]) -> dict[str, Any] | None:
+    account_match = FUTURE_ROW_START.match(line)
+    if not account_match:
+        return None
+    dates = list(re.finditer(DATE_TOKEN, line))
+    if len(dates) < 2:
+        return None
+    arrival, departure = dates[0].group(), dates[1].group()
+    nights_match = re.match(r"\s+(\d+)\b", line[dates[1].end():])
+    try:
+        check_in, check_out = _iso_date(arrival), _iso_date(departure)
+    except ValueError:
+        return None
+    if not nights_match:
+        return None
+    return {
+        "guest_name": " ".join(
+            line[account_match.end():min(columns["Frequent Traveler"], dates[0].start())].split()
+        ),
+        "confirmation_number": MISSING,
+        "folio_number": MISSING,
+        "account_number": account_match.group(1),
+        "check_in": check_in,
+        "check_out": check_out,
+        "rooms_booked": 1,
+        "primary_email": MISSING,
+        "secondary_email": MISSING,
+        # The real Future Reservations report has no reservation-status field.
+        # Every row is future inventory, so do not reinterpret Rate Plan as status.
+        "status": "Reserved",
+    }
 
 
 def parse_future_reservations_text(text: str) -> dict[str, Any]:
-    if not re.search(r"Future Reservations? Report", text, re.IGNORECASE):
+    if not re.search(r"^\s*Future Reservations?(?: Report)?\s*$", text, re.IGNORECASE | re.MULTILINE):
         raise ValueError("source is not a Future Reservation Report")
-    reservations = []
+    reservations: list[dict[str, Any]] = []
+    columns: dict[str, int] | None = None
     for line in text.splitlines():
-        match = RAR_ROW.match(line)
-        if not match:
+        header = _future_column_starts(line)
+        if header:
+            columns = header
             continue
-        account, guest, arrival, departure, _nights, status = match.groups()
-        reservations.append({
-            "guest_name": " ".join(guest.split()),
-            "confirmation_number": MISSING,
-            "folio_number": MISSING,
-            "account_number": account,
-            "check_in": _iso_date(arrival),
-            "check_out": _iso_date(departure),
-            "rooms_booked": 1,
-            "primary_email": MISSING,
-            "secondary_email": MISSING,
-            "status": STATUS_CODES.get(status.upper(), status.upper()),
-        })
+        if not columns:
+            continue
+        row = _future_row(line, columns)
+        if row:
+            if not row["guest_name"]:
+                raise ValueError(f"Future Reservation row has no guest name: {row['account_number']}")
+            reservations.append(row)
+            continue
+        # Long guest names wrap into the fixed Guest Name column on the next
+        # physical line. Ignore wrapping in every other report column.
+        if (
+            reservations
+            and not FUTURE_ROW_START.match(line)
+            and not line[columns["Frequent Traveler"]:].strip()
+        ):
+            fragment = _future_guest_fragment(line, columns)
+            if (
+                fragment
+                and not fragment.isdigit()
+                and not re.search(
+                    rf"{DATE_TOKEN}|Total Reservations|Total Room Nights|Future Reservations",
+                    fragment,
+                    re.IGNORECASE,
+                )
+            ):
+                reservations[-1]["guest_name"] = " ".join(
+                    [reservations[-1]["guest_name"], fragment]
+                )
     total = re.search(r"Total Reservations:\s*([\d,]+)", text, flags=re.IGNORECASE)
     if not total:
         raise ValueError("missing Future Reservation total")
