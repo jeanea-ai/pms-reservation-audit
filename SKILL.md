@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.3-candidate.1"
+version: "0.3.3"
 description: >
   On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, duplicate reservations, and
