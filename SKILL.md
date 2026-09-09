@@ -1,13 +1,14 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.3"
 description: >
   On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
-  recent No Show and Cancelled balances, duplicate reservations, and
+  recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
   double bookings. Trigger on natural requests such as "audit my guest
   ledger", "who owes us money?", "check no-shows and cancellations", or "find
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
+metadata:
+  version: "0.3.4"
 ---
 
 # ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit
@@ -68,16 +69,19 @@ question. Do not begin open-ended browser experiments.
 ## Guest Ledger input
 
 Pull a new Guest Ledger with current/default parameters. Review every page and
-locate **No-Show Accounts** and **Cancelled Accounts**. Keep only nonzero-balance
-reservations whose arrival date is within the inclusive window from local today
-minus 30 days through local today. Collect guest name, account number, status,
-arrival date, and balance.
+locate **No-Show Accounts**, **Cancelled Accounts**, and **Group**. Keep only
+nonzero-balance No Show and Cancelled reservations whose arrival date is within
+the inclusive window from local today minus 30 days through local today. Include
+every account in the Group section regardless of its status, arrival date, or
+balance. Collect guest name, account number, status, arrival date, and balance.
 
 Never invent an identifier. Use `Not displayed.` for unavailable fields.
-Reconcile the complete extracted No-Show and Cancelled section subtotals to the
-printed report before applying the 30-day filter; a mismatch makes the audit
-incomplete. Do not include Group, Checked Out, In House, older, or zero-balance
-accounts in the findings.
+Reconcile the complete extracted No-Show, Cancelled, and Group section subtotals
+to the printed report before applying the 30-day filter to No Show and Cancelled
+accounts; a mismatch makes the audit incomplete. Never apply an age filter to
+Group accounts. Do not include Checked Out or In House accounts from sections
+other than Group, older No Show or Cancelled accounts, or zero-balance No Show
+or Cancelled accounts in the findings.
 
 ## Duplicate-reservation input
 
@@ -136,3 +140,4 @@ If PDF generation fails after its bounded retry, deliver the structured text
 result, say the PDF failed, and do not claim full delivery success.
 
 After delivery, log the result with `kolo log-action` without `--category`.
+
