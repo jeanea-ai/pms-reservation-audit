@@ -19,8 +19,8 @@ Example Education
 Checked Out 4000001 4/22/26 4/23/26 100.00
 Foundation
 Checked Out STURDY CO 4000002 10/19/26 10/20/26 200.00
-Community
+Education & Community
 Checked Out 4000003 8/1/26 8/2/26 300.00
-Partnership
+Partnership IECP
 Subtotal Group: 600.00
 Total For All Accounts: 670.80

@@ -26,7 +26,9 @@ class SourceToInputTests(unittest.TestCase):
         ])
         self.assertEqual(sum(row["balance"] for row in result["cancelled"]), 60.0)
         self.assertEqual([row["guest_name"] for row in result["groups"]], [
-            "Example Education Foundation", "STURDY CO", "Community Partnership",
+            "Example Education Foundation",
+            "STURDY CO Education & Community",
+            "Partnership IECP",
         ])
         self.assertEqual(sum(row["balance"] for row in result["groups"]), 600.0)
 
@@ -99,7 +101,9 @@ class SourceToInputTests(unittest.TestCase):
         self.assertEqual(len(payload["reservations"]), 3)
         self.assertEqual([row["guest_name"] for row in payload["guest_ledger"]["balances"]], [
             "SAMPLE, ALPHA", "SAMPLE, BETA", "SAMPLE, RECENT",
-            "Example Education Foundation", "STURDY CO", "Community Partnership",
+            "Example Education Foundation",
+            "STURDY CO Education & Community",
+            "Partnership IECP",
         ])
         spec, analysis = build_report_spec(payload)
         self.assertEqual(spec["audit_features"], ["guest_ledger", "duplicates"])

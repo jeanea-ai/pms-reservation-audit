@@ -121,11 +121,11 @@ def _parse_ledger_rows(
     current: dict[str, Any] | None = None
     fragments: list[str] = []
 
-    def finish(attach_fragments: bool) -> None:
+    def finish() -> None:
         nonlocal current, fragments
         if current is None:
             return
-        if attach_fragments:
+        if fragments:
             current["guest_name"] = " ".join(
                 part for part in [current["guest_name"], *fragments] if part
             )
@@ -140,10 +140,8 @@ def _parse_ledger_rows(
         if match:
             prefix = fragments
             if current is not None:
-                had_inline_name = bool(current["_had_inline_name"])
-                finish(attach_fragments=not had_inline_name)
-                if not had_inline_name:
-                    prefix = []
+                finish()
+                prefix = []
             inline_name = " ".join((match.group(2) or "").split())
             name = " ".join([*prefix, inline_name]).strip()
             fragments = []
@@ -166,7 +164,7 @@ def _parse_ledger_rows(
         fragment = _name_fragment(raw)
         if fragment:
             fragments.append(fragment)
-    finish(attach_fragments=True)
+    finish()
     return records
 
 
