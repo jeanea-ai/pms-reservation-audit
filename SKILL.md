@@ -8,10 +8,10 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.6"
+  version: "0.3.7"
 ---
 
-# ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit
+# PMS Reconciliation
 
 Run this on demand only. It is strictly read-only: never edit, cancel, merge,
 create, or otherwise modify any PMS record. Every audit must use fresh reports;
