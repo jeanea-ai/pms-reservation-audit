@@ -8,7 +8,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.7"
+  version: "0.3.8"
 ---
 
 # PMS Reconciliation
@@ -23,6 +23,10 @@ never reuse report data from an earlier run.
    Otherwise follow the installed `choiceadvantage-report-pull` skill for login,
    report navigation, trusted clicks, and report retrieval. Do not invent a new
    browser/CDP method during an audit.
+   ChoiceADVANTAGE report keys are single-use. The first response containing
+   `%PDF-` bytes is the report artifact, not a probe: save it immediately and
+   never submit that key again. An empty response means the key is spent; reopen
+   the report parameters, generate a new key, and make one bounded retry.
 2. Resolve the property from the request, saved default, or unambiguous active
    property. Ask only if multiple properties remain ambiguous. Pause for MFA or
    expired access.
@@ -33,7 +37,7 @@ never reuse report data from an earlier run.
 4. Save the fresh Guest Ledger and Future Reservation Report as PDF
    files, then build the versioned input deterministically:
 
-   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" -o audit_input.json`
+   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" --expected-feature guest_ledger --expected-feature duplicates -o audit_input.json`
 
    The parser reconciles Guest Ledger subtotals and Future Reservation row
    counts to their printed totals and fails closed on a mismatch. It treats
@@ -54,10 +58,15 @@ never reuse report data from an earlier run.
 Run `python3 scripts/readiness.py` only after installation or an environment,
 credential, helper-skill, renderer, or platform change—not before every audit.
 
-If report extraction fails, refresh current browser state and make one retry
-using the report-pull skill's documented fallback. If it still fails, preserve
-the successful artifacts, mark the audit incomplete, and ask one actionable
-question. Do not begin open-ended browser experiments.
+If report retrieval or extraction fails, refresh current browser state and make
+one retry using a newly generated report key and the report-pull skill's
+documented fallback. Never retry a spent key. If one report still fails,
+preserve the successful artifact and run the same input command with every
+originally requested `--expected-feature` but only the successfully retrieved
+report file. The command marks the audit incomplete and prints one actionable
+`next_question`; ask that exact question. If neither report was retrieved, run
+the command with the expected features and no report arguments; ask the emitted
+`next_question`. Do not hand-edit JSON or begin open-ended browser experiments.
 
 ## Authentication and access
 
@@ -143,4 +152,3 @@ If PDF generation fails after its bounded retry, deliver the structured text
 result, say the PDF failed, and do not claim full delivery success.
 
 After delivery, log the result with `kolo log-action` without `--category`.
-

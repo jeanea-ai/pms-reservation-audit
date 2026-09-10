@@ -95,7 +95,14 @@ class AuditReportTests(unittest.TestCase):
                 render_pdf_atomic(valid_spec(180), output, chromium_path=None)
             self.assertFalse(output.exists())
 
+    def test_structural_verifier_is_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "signed-only.pdf"
+            output.write_bytes(b"%PDF-not-verified")
+            with patch.dict(sys.modules, {"pypdf": None}):
+                with self.assertRaisesRegex(RuntimeError, "pypdf is required"):
+                    verify_pdf_structure(output, valid_spec())
+
 
 if __name__ == "__main__":
     unittest.main()
-

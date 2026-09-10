@@ -39,7 +39,7 @@ class ReadinessTests(unittest.TestCase):
     def test_report_pull_contract_and_version_are_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "SKILL.md"
-            path.write_text("---\nname: choiceadvantage-report-pull\nversion: 0.1.0\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
+            path.write_text("---\nname: choiceadvantage-report-pull\nversion: 0.1.0\nreport_pull_contract: one-shot-pdf-v1\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
             self.assertTrue(_check_report_pull(path)[0])
             path.write_text("---\nname: choiceadvantage-report-pull\nversion: 0.0.1\n---\n", encoding="utf-8")
             self.assertFalse(_check_report_pull(path)[0])
@@ -47,8 +47,16 @@ class ReadinessTests(unittest.TestCase):
     def test_versionless_report_pull_contract_is_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "SKILL.md"
-            path.write_text("---\nname: choiceadvantage-report-pull\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
+            path.write_text("---\nname: choiceadvantage-report-pull\nreport_pull_contract: one-shot-pdf-v1\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
             self.assertTrue(_check_report_pull(path)[0])
+
+    def test_report_pull_without_one_shot_contract_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "SKILL.md"
+            path.write_text("---\nname: choiceadvantage-report-pull\nversion: 0.1.0\n---\nUse j_username and j_password; choose Continue, never Migrate.\n", encoding="utf-8")
+            ok, detail = _check_report_pull(path)
+            self.assertFalse(ok)
+            self.assertIn("one-shot-pdf-v1", detail)
 
     def test_missing_timezone_guidance_is_deferred_not_failed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,6 +84,23 @@ class ReadinessTests(unittest.TestCase):
             with patch("scripts.readiness.importlib.util.find_spec", return_value=None), patch("scripts.readiness.find_chromium", return_value=None), patch("scripts.readiness.shutil.which", return_value=None):
                 results = inspect(skill, {})
             self.assertIn(("SKIP", "live ChoiceADVANTAGE access", "confirm property, report visibility, and MFA state during the requested audit"), results)
+
+    def test_missing_pdf_verifier_fails_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+
+            def module_lookup(name):
+                return None if name == "pypdf" else True
+
+            with patch("scripts.readiness.importlib.util.find_spec", side_effect=module_lookup), \
+                    patch("scripts.readiness.find_chromium", return_value="chromium"), \
+                    patch("scripts.readiness.shutil.which", return_value=None):
+                results = inspect(skill, {})
+            self.assertIn((
+                "FAIL", "PDF structural verifier",
+                "install pypdf; PDF publication must fail closed without it",
+            ), results)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ except ModuleNotFoundError:
 REPORT_PULL_NAME = "choiceadvantage-report-pull"
 REPORT_PULL_MIN_VERSION = (0, 1, 0)
 REPORT_PULL_CONTRACT_TOKENS = ("j_username", "j_password", "Continue", "Migrate")
+REPORT_PULL_ARTIFACT_CONTRACT = "one-shot-pdf-v1"
 
 
 def _result(status: str, name: str, detail: str) -> tuple[str, str, str]:
@@ -59,6 +60,11 @@ def _check_report_pull(path: Path):
     missing = [token for token in REPORT_PULL_CONTRACT_TOKENS if token not in text]
     if metadata.get("name") != REPORT_PULL_NAME:
         return False, "frontmatter name does not match the report-pull contract"
+    if metadata.get("report_pull_contract") != REPORT_PULL_ARTIFACT_CONTRACT:
+        return False, (
+            "report-pull skill must declare report_pull_contract: one-shot-pdf-v1 "
+            "and save the first valid PDF response without probing or key reuse"
+        )
     if version_text and (version is None or version < REPORT_PULL_MIN_VERSION):
         return False, "declared version is invalid or older than 0.1.0"
     if missing:
@@ -129,6 +135,13 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
     results.append(_result("PASS" if reportlab or chromium else "FAIL", "PDF renderer",
                            "reportlab" if reportlab else "Chromium fallback" if chromium else
                            "install reportlab or Chromium"))
+
+    pypdf = importlib.util.find_spec("pypdf") is not None
+    results.append(_result(
+        "PASS" if pypdf else "FAIL",
+        "PDF structural verifier",
+        "pypdf" if pypdf else "install pypdf; PDF publication must fail closed without it",
+    ))
 
     pdftotext = shutil.which("pdftotext")
     pdfplumber = importlib.util.find_spec("pdfplumber") is not None

@@ -79,6 +79,7 @@ naturally — for example:
 ## Validate
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 scripts/readiness.py
 python3 -m unittest discover -s tests
 ```
@@ -91,6 +92,8 @@ python3 scripts/source_to_input.py \
   --future-reservations future-reservations.pdf \
   --property-local-date 2026-09-08 \
   --reviewed-at "2026-09-08 17:00 America/Los_Angeles" \
+  --expected-feature guest_ledger \
+  --expected-feature duplicates \
   -o audit_input.json
 ```
 
@@ -105,4 +108,3 @@ override.
 
 The input is schema version `1`; reservation room counts use `rooms_booked` so
 physical room numbers cannot be mistaken for quantities.
-
