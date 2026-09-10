@@ -46,6 +46,25 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual(config_before, (self.root / "CAF15.json").read_bytes())
         self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
 
+    def test_real_pms_setup_vendor_label_resolves_without_mutation(self):
+        self._write_config(
+            {
+                "vendor": "SkyTouch / Choice Advantage",
+                "legacy_username": "KUser.caf15",
+            }
+        )
+        (self.root / ".secrets.json").write_text(
+            json.dumps({"CAF15": {"pms_password": "secret"}}),
+            encoding="utf-8",
+        )
+        config_before = (self.root / "CAF15.json").read_bytes()
+        secrets_before = (self.root / ".secrets.json").read_bytes()
+        access = resolve_access("CAF15", environ={}, config_dir=self.root)
+        self.assertEqual("KUser.caf15", access["username"])
+        self.assertEqual("secret", access["password"])
+        self.assertEqual(config_before, (self.root / "CAF15.json").read_bytes())
+        self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
+
     def test_older_combined_secret_shape_remains_supported(self):
         self._write_config({"vendor": "choice_advantage"})
         (self.root / ".secrets.json").write_text(

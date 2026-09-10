@@ -55,8 +55,13 @@ def resolve_access(
     pms = config.get("pms")
     if not isinstance(pms, dict):
         raise AccessError("PMS Setup property config has no pms block")
-    vendor = str(pms.get("vendor") or "choice_advantage").casefold()
-    if vendor not in {"choice_advantage", "choiceadvantage", "skytouch"}:
+    vendor = str(pms.get("vendor") or "choice_advantage").strip().casefold()
+    if vendor not in {
+        "choice_advantage",
+        "choiceadvantage",
+        "skytouch",
+        "skytouch / choice advantage",
+    }:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
 
     secrets = _read_json(root / ".secrets.json", "PMS Setup secrets file")
