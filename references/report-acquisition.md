@@ -26,6 +26,14 @@ It reports only whether the established access fields resolve. Browser login
 code may import `resolve_access()` from that module; never print its returned
 username or password.
 
+### Standalone test access
+
+If the operator explicitly requested testing before PMS Setup can be completed,
+use `resolve_access(..., allow_test_access=True)` through
+`scripts/pms_login.py --test-access`. The protected credential inputs and their
+owner-only file contract are documented in `SKILL.md`; never place the file in
+the repository or pass credentials as command-line values.
+
 ## Login
 
 1. Open `https://www.choiceadvantage.com/choicehotels/sign_in.jsp`.
@@ -36,7 +44,10 @@ username or password.
    the same DOM-verified values at most twice.
 4. If offered **Migrate** or **Continue**, select **Continue**. Never migrate
    the account unless the operator explicitly authorizes that account change.
-5. Never bypass MFA; pause for the operator when it is required.
+5. For an explicitly authorized standalone test, the login command may select
+   the exact official **Skip MFA** control once per login when ChoiceADVANTAGE
+   displays it. If it is absent, pause for the operator. Normal access must never
+   bypass MFA.
 
 ## Navigate and set parameters
 

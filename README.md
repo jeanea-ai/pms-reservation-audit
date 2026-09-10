@@ -31,6 +31,9 @@ chat summary:
 - **Credential-safe** — login identity, timezone, and password references come
   from the existing PMS Setup property contract; password values resolve from
   the host's established environment/secrets path at run time.
+- **Testable before full setup** — an explicitly gated standalone test mode can
+  use protected environment secrets or an owner-only JSON file without exposing
+  credentials to the agent or accepting them on the command line.
 - **Self-contained** — browser report-acquisition rules and one-shot PDF
   verification ship with this skill; no report-pull helper is required.
 - **Low-input** — reuses a valid session and an unambiguous active/default
@@ -77,6 +80,10 @@ naturally — for example:
   rejects spent-key reuse, and verifies searchable parser input.
 - `scripts/pms_access.py` — resolves the existing PMS Setup property/login
   contract without modifying it or printing credentials.
+- `scripts/pms_login.py` — injects credentials directly into the persistent
+  ChoiceADVANTAGE browser, reuses an authenticated session, and in standalone
+  test mode can select only the exact official **Skip MFA** control when
+  explicitly authorized.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
   procedure using the access contract created by PMS Setup.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
@@ -92,6 +99,29 @@ python3 -m pip install -r requirements.txt
 python3 scripts/readiness.py
 python3 -m unittest discover -s tests
 ```
+
+### Standalone access for a live read-only test
+
+Use the host's protected secret configuration for
+`PMS_RECON_TEST_USERNAME`, `PMS_RECON_TEST_PASSWORD`, and
+`PMS_RECON_TEST_TIMEZONE`; optionally bind `PMS_RECON_TEST_PROPERTY_CODE`.
+Do not paste these values into chat or put them in this repository. Alternatively,
+copy `references/test-access.example.json` to a location outside the repository,
+replace its placeholders locally, run `chmod 600` on it, and set
+`PMS_RECON_TEST_ACCESS_FILE` to that path.
+
+Then run:
+
+```bash
+python3 scripts/readiness.py --test-access --hotel CAF15
+python3 scripts/pms_login.py --hotel CAF15 --test-access --allow-skip-mfa
+```
+
+The second command prints only a redacted JSON state. While ChoiceADVANTAGE
+offers the official option, it selects the exact **Skip MFA** control on each
+new login. If the option disappears, it returns `needs_mfa` instead of attempting
+another bypass. Standalone test access remains read-only and must not be used by
+a schedule or email-delivery path.
 
 After this skill's acquisition procedure saves the fresh source reports:
 

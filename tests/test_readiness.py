@@ -98,6 +98,27 @@ class ReadinessTests(unittest.TestCase):
                 "install pypdf; PDF publication must fail closed without it",
             ), results)
 
+    def test_standalone_test_readiness_uses_protected_environment_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+            env = {
+                "PMS_RECON_TEST_USERNAME": "KUser.test",
+                "PMS_RECON_TEST_PASSWORD": "super-secret",
+                "PMS_RECON_TEST_TIMEZONE": "America/Los_Angeles",
+            }
+            with patch("scripts.readiness.importlib.util.find_spec", return_value=True), \
+                    patch("scripts.readiness.find_chromium", return_value="chromium"), \
+                    patch("scripts.readiness.shutil.which", return_value=None):
+                results = inspect(skill, env, test_hotel="CAF15")
+            self.assertIn((
+                "PASS", "standalone test access",
+                "protected credentials and IANA timezone resolve (values not displayed)",
+            ), results)
+            rendered = repr(results)
+            self.assertNotIn("KUser.test", rendered)
+            self.assertNotIn("super-secret", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

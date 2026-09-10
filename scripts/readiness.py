@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -13,8 +14,10 @@ import sys
 
 try:
     from scripts.audit_report import find_chromium
+    from scripts.pms_access import AccessError, resolve_access
 except ModuleNotFoundError:
     from audit_report import find_chromium
+    from pms_access import AccessError, resolve_access
 
 
 def _result(status: str, name: str, detail: str) -> tuple[str, str, str]:
@@ -60,7 +63,13 @@ def _check_timezone_guidance(path: Path):
     return True, "property-local timezone guidance present"
 
 
-def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
+def inspect(
+    skill_dir: Path,
+    environ: dict[str, str] | None = None,
+    *,
+    test_hotel: str | None = None,
+    test_access_file: Path | None = None,
+):
     env = os.environ if environ is None else environ
     workspace = skill_dir.parent.parent
     results = []
@@ -73,6 +82,7 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "scripts/audit_report.py",
         "scripts/one_shot_pdf.py",
         "scripts/pms_access.py",
+        "scripts/pms_login.py",
         "references/report-acquisition.md",
         "assets/caf15_audit_report.pdf",
     ):
@@ -93,6 +103,13 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "pypdf" if pypdf else "install pypdf; PDF publication must fail closed without it",
     ))
 
+    websocket_client = importlib.util.find_spec("websocket") is not None
+    results.append(_result(
+        "PASS" if websocket_client else "FAIL",
+        "browser CDP client",
+        "websocket-client" if websocket_client else "install websocket-client",
+    ))
+
     pdftotext = shutil.which("pdftotext")
     pdfplumber = importlib.util.find_spec("pdfplumber") is not None
     results.append(_result(
@@ -102,17 +119,39 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "install pdftotext or pdfplumber",
     ))
 
-    configured_secret = env.get("CHOICEADVANTAGE_SECRETS_FILE")
-    secret_path = Path(configured_secret) if configured_secret else workspace / "kolo-hotels" / "config" / ".secrets.json"
-    secret_ok, secret_detail = _check_secrets(secret_path)
-    results.append(_result("PASS" if secret_ok else "FAIL", "credentials file", secret_detail))
+    test_access = None
+    if test_hotel:
+        try:
+            test_access = resolve_access(
+                test_hotel,
+                environ=env,
+                allow_test_access=True,
+                test_access_file=test_access_file,
+            )
+            results.append(_result(
+                "PASS", "standalone test access",
+                "protected credentials and IANA timezone resolve (values not displayed)",
+            ))
+        except AccessError as exc:
+            results.append(_result("FAIL", "standalone test access", str(exc)))
+    else:
+        configured_secret = env.get("CHOICEADVANTAGE_SECRETS_FILE")
+        secret_path = Path(configured_secret) if configured_secret else workspace / "kolo-hotels" / "config" / ".secrets.json"
+        secret_ok, secret_detail = _check_secrets(secret_path)
+        results.append(_result("PASS" if secret_ok else "FAIL", "credentials file", secret_detail))
 
     agents_candidates = [workspace / "AGENTS.md", skill_dir / "AGENTS.md"]
     agents_path = next((p for p in agents_candidates if p.is_file()), agents_candidates[0])
     time_ok, time_detail = _check_timezone_guidance(agents_path)
-    results.append(_result("PASS" if time_ok else "SKIP", "property-local time rules",
-                           time_detail if time_ok else
-                           "confirm the selected property's local timezone during the live audit"))
+    if test_access:
+        results.append(_result(
+            "PASS", "property-local time rules",
+            "validated from standalone test access (value not displayed)",
+        ))
+    else:
+        results.append(_result("PASS" if time_ok else "SKIP", "property-local time rules",
+                               time_detail if time_ok else
+                               "confirm the selected property's local timezone during the live audit"))
 
     kolo = shutil.which("kolo")
     if not kolo:
@@ -133,8 +172,21 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--test-access", action="store_true")
+    parser.add_argument("--hotel")
+    parser.add_argument("--test-access-file", type=Path)
+    args = parser.parse_args()
+    if args.test_access and not args.hotel:
+        parser.error("--test-access requires --hotel")
+    if args.test_access_file and not args.test_access:
+        parser.error("--test-access-file requires --test-access")
     skill_dir = Path(__file__).resolve().parent.parent
-    results = inspect(skill_dir)
+    results = inspect(
+        skill_dir,
+        test_hotel=args.hotel if args.test_access else None,
+        test_access_file=args.test_access_file,
+    )
     for status, name, detail in results:
         print(f"{status:<4} {name}: {detail}")
     failures = sum(status == "FAIL" for status, _, _ in results)

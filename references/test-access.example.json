@@ -1,0 +1,6 @@
+{
+  "property_code": "CAF15",
+  "username": "KUser.example",
+  "password": "replace-through-a-protected-secret-file",
+  "timezone": "America/Los_Angeles"
+}

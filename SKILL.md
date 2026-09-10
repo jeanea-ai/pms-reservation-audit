@@ -1,5 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
+version: "0.3.9"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -8,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.8"
+  version: "0.3.9"
 ---
 
 # PMS Reconciliation
@@ -16,6 +17,34 @@ metadata:
 Run this on demand only. It is strictly read-only: never edit, cancel, merge,
 create, or otherwise modify any PMS record. Every audit must use fresh reports;
 never reuse report data from an earlier run.
+
+## Standalone test access
+
+When the operator explicitly requests a test but PMS Setup is incomplete, use
+the gated standalone test-access path. Never ask for or accept a username,
+password, OTP, or test-access JSON in chat. The operator must provide credentials
+through protected environment secrets or an owner-only file outside the skill:
+
+- `PMS_RECON_TEST_USERNAME`
+- `PMS_RECON_TEST_PASSWORD`
+- `PMS_RECON_TEST_TIMEZONE`
+- optional `PMS_RECON_TEST_PROPERTY_CODE`
+- or `PMS_RECON_TEST_ACCESS_FILE`, pointing to an owner-only (`chmod 600`),
+  non-symlink JSON file matching `references/test-access.example.json`
+
+Do not combine the file and direct environment forms. Confirm the non-secret
+contract with `python3 scripts/readiness.py --test-access --hotel <CODE>`, then
+log in with:
+
+`python3 scripts/pms_login.py --hotel <CODE> --test-access --allow-skip-mfa`
+
+`--allow-skip-mfa` is authorized only for this explicit testing path. On every
+login it may select exactly one visible control whose label is **Skip MFA** while
+ChoiceADVANTAGE offers that official option. It must not match approximate labels,
+bypass another challenge, migrate the account, or store an OTP/MFA token. If the
+exact control is absent, stop with `needs_mfa` and let the operator complete MFA.
+All access and report data are still real and read-only; describe resulting
+artifacts as test output and do not schedule or email them.
 
 ## Normal execution path
 
@@ -25,6 +54,9 @@ never reuse report data from an earlier run.
    capture procedure. This skill uses the property access created by
    `mf-hotel-pms-setup`; it does not require a report-pull helper. Do not invent
    another browser/CDP method during an audit.
+   For standalone testing, run the deterministic `pms_login.py` command above so
+   credentials pass directly from the protected source to the browser without
+   appearing in agent context or command-line arguments.
    ChoiceADVANTAGE report keys are single-use. The first response containing
    `%PDF-` bytes is the report artifact, not a probe: save it immediately and
    never submit that key again. An empty response means the key is spent; reopen
@@ -75,7 +107,9 @@ the command with the expected features and no report arguments; ask the emitted
 - Credentials come from the configured secrets file at runtime. Never display
   them or ask the owner to paste them into chat or skill instructions.
 - On the Okta migration interstitial choose **Continue**, not **Migrate**.
-- Never bypass MFA. Let the owner complete it.
+- Outside explicitly authorized standalone testing, never bypass MFA. During an
+  authorized test login, only the exact official **Skip MFA** control may be
+  selected; otherwise let the owner complete the challenge.
 - Confirm the active property and required reports are accessible. Record any
   inaccessible report, page, record, or field as a limitation.
 - Do not claim completion after a session expires or a required page is missed.

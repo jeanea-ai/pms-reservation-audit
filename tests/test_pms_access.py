@@ -104,6 +104,49 @@ class PmsAccessTests(unittest.TestCase):
         with self.assertRaisesRegex(AccessError, "does not support"):
             resolve_access("CAF15", environ={}, config_dir=self.root)
 
+    def test_standalone_test_access_resolves_from_environment_only_when_enabled(self):
+        env = {
+            "PMS_RECON_TEST_USERNAME": "KUser.test",
+            "PMS_RECON_TEST_PASSWORD": "super-secret",
+            "PMS_RECON_TEST_TIMEZONE": "America/Los_Angeles",
+            "PMS_RECON_TEST_PROPERTY_CODE": "CAF15",
+        }
+        access = resolve_access("caf15", environ=env, allow_test_access=True)
+        self.assertEqual("standalone-test", access["source"])
+        self.assertTrue(access["test_only"])
+        self.assertEqual("super-secret", access["password"])
+        with self.assertRaisesRegex(AccessError, "property config"):
+            resolve_access("CAF15", environ=env, config_dir=self.root)
+
+    def test_standalone_file_must_be_owner_only_and_match_property(self):
+        path = self.root / "test-access.json"
+        path.write_text(json.dumps({
+            "property_code": "CAF15",
+            "username": "KUser.test",
+            "password": "super-secret",
+            "timezone": "America/Los_Angeles",
+        }), encoding="utf-8")
+        path.chmod(0o644)
+        with self.assertRaisesRegex(AccessError, "chmod 600"):
+            resolve_access("CAF15", environ={}, allow_test_access=True, test_access_file=path)
+        path.chmod(0o600)
+        access = resolve_access("CAF15", environ={}, allow_test_access=True, test_access_file=path)
+        self.assertEqual("standalone-test", access["source"])
+        with self.assertRaisesRegex(AccessError, "does not match"):
+            resolve_access("CAA00", environ={}, allow_test_access=True, test_access_file=path)
+
+    def test_standalone_access_rejects_partial_or_invalid_timezone(self):
+        with self.assertRaisesRegex(AccessError, "requires protected"):
+            resolve_access("CAF15", environ={
+                "PMS_RECON_TEST_USERNAME": "KUser.test",
+            }, allow_test_access=True)
+        with self.assertRaisesRegex(AccessError, "valid IANA"):
+            resolve_access("CAF15", environ={
+                "PMS_RECON_TEST_USERNAME": "KUser.test",
+                "PMS_RECON_TEST_PASSWORD": "super-secret",
+                "PMS_RECON_TEST_TIMEZONE": "Not/AZone",
+            }, allow_test_access=True)
+
 
 if __name__ == "__main__":
     unittest.main()
