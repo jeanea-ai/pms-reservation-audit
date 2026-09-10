@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Parse fresh ChoiceADVANTAGE report artifacts into audit_input.json.
 
-The browser/report-pull helper owns authentication and report retrieval. This
-module owns only deterministic, local parsing and reconciliation.
+The skill's browser acquisition procedure owns authentication and report
+retrieval. This module owns only deterministic, local parsing and
+reconciliation.
 """
 
 from __future__ import annotations

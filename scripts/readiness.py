@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -18,59 +17,8 @@ except ModuleNotFoundError:
     from audit_report import find_chromium
 
 
-REPORT_PULL_NAME = "choiceadvantage-report-pull"
-REPORT_PULL_MIN_VERSION = (0, 1, 0)
-REPORT_PULL_CONTRACT_TOKENS = ("j_username", "j_password", "Continue", "Migrate")
-REPORT_PULL_ARTIFACT_CONTRACT = "one-shot-pdf-v1"
-
-
 def _result(status: str, name: str, detail: str) -> tuple[str, str, str]:
     return status, name, detail
-
-
-def _version_tuple(value: str):
-    match = re.fullmatch(r"[vV]?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", value.strip())
-    return tuple(map(int, match.groups())) if match else None
-
-
-def _frontmatter(text: str) -> dict[str, str]:
-    if not text.startswith("---"):
-        return {}
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return {}
-    result = {}
-    for line in parts[1].splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            result[key.strip()] = value.strip().strip('"\'')
-    return result
-
-
-def _check_report_pull(path: Path):
-    if not path.is_file():
-        return False, "choiceadvantage-report-pull is not installed"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False, "SKILL.md could not be read"
-    metadata = _frontmatter(text)
-    version_text = metadata.get("version")
-    version = _version_tuple(version_text) if version_text else None
-    missing = [token for token in REPORT_PULL_CONTRACT_TOKENS if token not in text]
-    if metadata.get("name") != REPORT_PULL_NAME:
-        return False, "frontmatter name does not match the report-pull contract"
-    if metadata.get("report_pull_contract") != REPORT_PULL_ARTIFACT_CONTRACT:
-        return False, (
-            "report-pull skill must declare report_pull_contract: one-shot-pdf-v1 "
-            "and save the first valid PDF response without probing or key reuse"
-        )
-    if version_text and (version is None or version < REPORT_PULL_MIN_VERSION):
-        return False, "declared version is invalid or older than 0.1.0"
-    if missing:
-        return False, "required login/navigation contract markers are missing"
-    version_detail = f" version {version_text}" if version_text else " (legacy versionless)"
-    return True, f"contract {metadata['name']}{version_detail}"
 
 
 def _check_secrets(path: Path):
@@ -88,14 +36,13 @@ def _check_secrets(path: Path):
     for credentials in candidates:
         if not isinstance(credentials, dict):
             continue
-        username = credentials.get("username") or credentials.get("j_username") or credentials.get("pms_username")
         password = credentials.get("password") or credentials.get("j_password") or credentials.get("pms_password")
-        if isinstance(username, str) and username.strip() and isinstance(password, str) and password:
+        if isinstance(password, str) and password:
             valid = True
             break
     if not valid:
-        return False, "credentials JSON must contain a top-level or property-scoped non-empty PMS username and password"
-    return True, "valid credential structure (values not displayed)"
+        return False, "credentials JSON must contain a top-level or property-scoped non-empty PMS password"
+    return True, "valid credential secret structure (values not displayed); username resolves from PMS Setup property config"
 
 
 def _check_timezone_guidance(path: Path):
@@ -124,6 +71,9 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "scripts/audit_pipeline.py",
         "scripts/duplicate_analysis.py",
         "scripts/audit_report.py",
+        "scripts/one_shot_pdf.py",
+        "scripts/pms_access.py",
+        "references/report-acquisition.md",
         "assets/caf15_audit_report.pdf",
     ):
         path = skill_dir / relative
@@ -151,10 +101,6 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "pdftotext" if pdftotext else "pdfplumber" if pdfplumber else
         "install pdftotext or pdfplumber",
     ))
-
-    helper = workspace / "skills" / REPORT_PULL_NAME / "SKILL.md"
-    helper_ok, helper_detail = _check_report_pull(helper)
-    results.append(_result("PASS" if helper_ok else "FAIL", "report-pull skill", helper_detail))
 
     configured_secret = env.get("CHOICEADVANTAGE_SECRETS_FILE")
     secret_path = Path(configured_secret) if configured_secret else workspace / "kolo-hotels" / "config" / ".secrets.json"

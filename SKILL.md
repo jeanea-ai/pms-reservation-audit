@@ -1,7 +1,7 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
 description: >
-  On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
+  Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
   double bookings. Trigger on natural requests such as "audit my guest
   ledger", "who owes us money?", "check no-shows and cancellations", or "find
@@ -20,9 +20,11 @@ never reuse report data from an earlier run.
 ## Normal execution path
 
 1. Reuse a valid authenticated ChoiceADVANTAGE session when available.
-   Otherwise follow the installed `choiceadvantage-report-pull` skill for login,
-   report navigation, trusted clicks, and report retrieval. Do not invent a new
-   browser/CDP method during an audit.
+   Otherwise read [references/report-acquisition.md](references/report-acquisition.md)
+   and follow its login, report-navigation, trusted-click, and original-response
+   capture procedure. This skill uses the property access created by
+   `mf-hotel-pms-setup`; it does not require a report-pull helper. Do not invent
+   another browser/CDP method during an audit.
    ChoiceADVANTAGE report keys are single-use. The first response containing
    `%PDF-` bytes is the report artifact, not a probe: save it immediately and
    never submit that key again. An empty response means the key is spent; reopen
@@ -56,10 +58,10 @@ never reuse report data from an earlier run.
    atomic publication. Do not redo those stages in chat.
 
 Run `python3 scripts/readiness.py` only after installation or an environment,
-credential, helper-skill, renderer, or platform change—not before every audit.
+credential, renderer, or platform change—not before every audit.
 
 If report retrieval or extraction fails, refresh current browser state and make
-one retry using a newly generated report key and the report-pull skill's
+one retry using a newly generated report key and the acquisition reference's
 documented fallback. Never retry a spent key. If one report still fails,
 preserve the successful artifact and run the same input command with every
 originally requested `--expected-feature` but only the successfully retrieved
