@@ -74,7 +74,7 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     except (KeyError, ValueError):
         raise ValueError("metadata.property_local_date must use YYYY-MM-DD") from None
 
-    features, sections = [], []
+    features, sections, group_section = [], [], None
     ledger = payload.get("guest_ledger")
     if ledger is not None:
         if not isinstance(ledger, dict):
@@ -82,16 +82,32 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
         balances = ledger.get("balances", [])
         if not isinstance(balances, list):
             raise ValueError("guest_ledger.balances must be an array")
+        groups = ledger.get("groups", [])
+        if not isinstance(groups, list):
+            raise ValueError("guest_ledger.groups must be an array")
         features.append("guest_ledger")
         sections.append({
             "heading": "1. Guest Ledger Balance Review",
             "body": [_shown(ledger.get("completion_statement"))],
             "tables": [
-                {"table_title": "Guest Ledger — Recent No Show / Cancelled + All Groups", "headers": LEDGER_HEADERS,
+                {"table_title": "Past 30 Days — No Show / Cancelled Balances", "headers": LEDGER_HEADERS,
                  "rows": _ledger_rows(balances), "summary": _ledger_summary("Balances", balances)},
             ],
             "notes": ledger.get("notes", []),
         })
+        if groups:
+            group_section = {
+                "heading": "3. Group Accounts",
+                "body": [
+                    "Every Group account is listed regardless of age, status, or balance; "
+                    "the full printed Group subtotal is reconciled before display."
+                ],
+                "tables": [
+                    {"table_title": "Group Accounts", "headers": LEDGER_HEADERS,
+                     "rows": _ledger_rows(groups), "summary": _ledger_summary("Group", groups)},
+                ],
+                "notes": [],
+            }
 
     analysis = None
     reservations = payload.get("reservations")
@@ -119,6 +135,8 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
             "notes": [],
         })
 
+    if group_section is not None:
+        sections.append(group_section)
     if not features:
         raise ValueError("input must contain guest_ledger, reservations, or both")
     windows = inclusive_windows(today)
@@ -147,7 +165,7 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate extracted audit data, analyze duplicates, and render one PDF.")
     parser.add_argument("input", help="extracted audit JSON")
-    parser.add_argument("-o", "--out", required=True, help="final PDF path")
+    parser.add_argument("-o", "--out", default="PMS Reconciliation CAF15.pdf", help="final PDF path (default: PMS Reconciliation CAF15.pdf)")
     parser.add_argument("--spec-out", help="optional validated report-spec JSON path")
     args = parser.parse_args()
     started = perf_counter()

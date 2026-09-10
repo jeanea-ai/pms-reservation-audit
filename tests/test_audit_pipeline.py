@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -15,7 +17,7 @@ class AuditPipelineTests(unittest.TestCase):
         spec, analysis = build_report_spec(payload)
         self.assertEqual(spec["audit_features"], ["guest_ledger", "duplicates"])
         self.assertEqual([section["heading"] for section in spec["sections"]], [
-            "1. Guest Ledger Balance Review", "2. Duplicate Reservation Review",
+            "1. Guest Ledger Balance Review", "2. Duplicate Reservation Review", "3. Group Accounts",
         ])
         self.assertEqual(analysis["windows"]["future_12_months"]["groups_found"], 1)
         self.assertEqual(spec["max_pages"], 3)
@@ -52,6 +54,23 @@ class AuditPipelineTests(unittest.TestCase):
         self.assertEqual(rows[0][3], 3)
         self.assertEqual(rows[0][1], "A101, A102")
         self.assertNotIn("Confirmation", " ".join(map(str, rows[0])))
+
+
+    def test_pipeline_default_output_filename_is_pms_reconciliation_caf15(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_path = Path(tmp) / "audit_input.json"
+            payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            input_path.write_text(json.dumps(payload), encoding="utf-8")
+            default_out = Path("PMS Reconciliation CAF15.pdf")
+            try:
+                completed = subprocess.run(
+                    [sys.executable, str(Path("scripts/audit_pipeline.py")), str(input_path)],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertTrue(default_out.exists(), "default output filename was not produced")
+            finally:
+                default_out.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

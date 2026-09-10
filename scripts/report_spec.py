@@ -12,7 +12,7 @@ FEATURE_SECTIONS = {
     "duplicates": "2. Duplicate Reservation Review",
 }
 FEATURE_TABLES = {
-    "guest_ledger": ("Guest Ledger — Recent No Show / Cancelled + All Groups",),
+    "guest_ledger": ("Past 30 Days — No Show / Cancelled Balances",),
     "duplicates": ("Future 12 Months — Duplicate Reservations",),
 }
 

@@ -12,6 +12,7 @@
   "guest_ledger": {
     "completion_statement": "Every Guest Ledger page and required section was reviewed.",
     "balances": [{"guest_name":"Example Guest","status":"No Show","check_in":"2026-08-20","check_out":"2026-08-21","folio_number":"F1","account_number":"A1","confirmation_number":"Not displayed.","balance":-10.5}],
+    "groups": [{"guest_name":"Example Education Foundation","status":"Checked Out","check_in":"2026-04-22","check_out":"2026-04-23","account_number":"4000001","balance":100.0}],
     "notes": []
   },
   "reservations": [

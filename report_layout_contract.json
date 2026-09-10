@@ -1,0 +1,36 @@
+{
+  "contract_version": 1,
+  "document": {
+    "title": "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit",
+    "max_pages": 3,
+    "orientation": "portrait",
+    "disclaimer": "Read-only audit; no ChoiceADVANTAGE records were modified."
+  },
+  "sections": [
+    {
+      "heading": "1. Guest Ledger Balance Review",
+      "table_titles": ["Past 30 Days — No Show / Cancelled Balances"],
+      "headers": ["Guest", "Status", "Arrival", "Account", "Balance"]
+    },
+    {
+      "heading": "2. Duplicate Reservation Review",
+      "table_titles": ["Future 12 Months — Duplicate Reservations"],
+      "headers": ["Guest(s)", "Account(s)", "Stay", "Rooms", "Match"]
+    },
+    {
+      "heading": "3. Group Accounts",
+      "table_titles": ["Group Accounts"],
+      "headers": ["Guest", "Status", "Arrival", "Account", "Balance"]
+    }
+  ],
+  "prohibited_terms": ["Folio", "Confirmation"],
+  "group_isolation": {
+    "balance_table_excludes_statuses": ["Checked Out", "In House"]
+  },
+  "business_rules": {
+    "ledger_balance_window_days": 30,
+    "future_window_months": 12,
+    "one_room_per_row": true,
+    "consolidate_duplicate_groups_to_one_row": true
+  }
+}

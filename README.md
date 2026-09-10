@@ -97,8 +97,11 @@ python3 scripts/source_to_input.py \
 Then analyze and render:
 
 ```bash
-python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json
+python3 scripts/audit_pipeline.py audit_input.json --spec-out report-spec.json
 ```
+
+This writes `PMS Reconciliation CAF15.pdf` by default; pass `-o <path>` to
+override.
 
 The input is schema version `1`; reservation room counts use `rooms_booked` so
 physical room numbers cannot be mistaken for quantities.

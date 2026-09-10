@@ -44,7 +44,7 @@ class SourceToInputTests(unittest.TestCase):
             property_local_date="2026-09-08",
             reviewed_at="2026-09-08 17:00 America/Los_Angeles",
         )
-        group_rows = payload["guest_ledger"]["balances"][-4:]
+        group_rows = payload["guest_ledger"]["groups"]
         self.assertEqual([row["check_in"] for row in group_rows], [
             "2026-04-22", "2026-10-19", "2026-08-01", "2020-01-01",
         ])
@@ -101,6 +101,8 @@ class SourceToInputTests(unittest.TestCase):
         self.assertEqual(len(payload["reservations"]), 3)
         self.assertEqual([row["guest_name"] for row in payload["guest_ledger"]["balances"]], [
             "SAMPLE, ALPHA", "SAMPLE, BETA", "SAMPLE, RECENT",
+        ])
+        self.assertEqual([row["guest_name"] for row in payload["guest_ledger"]["groups"]], [
             "Example Education Foundation",
             "STURDY CO Education & Community",
             "Partnership IECP",

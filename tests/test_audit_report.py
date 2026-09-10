@@ -24,7 +24,7 @@ def valid_spec(row_count=1):
         "completion_warning": None,
         "audit_features": ["guest_ledger"],
         "sections": [{"heading": "1. Guest Ledger Balance Review", "body": ["All applicable pages were reviewed."], "tables": [
-            {"table_title": "Guest Ledger — Recent No Show / Cancelled + All Groups", "headers": ["Guest", "Account", "Balance"], "rows": rows, "summary": "Total"},
+            {"table_title": "Past 30 Days — No Show / Cancelled Balances", "headers": ["Guest", "Account", "Balance"], "rows": rows, "summary": "Total"},
         ], "notes": []}],
         "limitations": [],
     }

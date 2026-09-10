@@ -397,13 +397,13 @@ def build_audit_input(
             item for item in [*ledger["no_shows"], *ledger["cancelled"]]
             if ledger_start <= date.fromisoformat(item["check_in"]) <= local_today
         ]
-        balances = [*recent_no_show_and_cancelled, *ledger["groups"]]
         payload["guest_ledger"] = {
             "completion_statement": (
                 "Every Guest Ledger page was parsed; No-Show, Cancelled, and Group "
                 "subtotals reconciled to the printed report."
             ),
-            "balances": balances,
+            "balances": recent_no_show_and_cancelled,
+            "groups": ledger["groups"],
             "notes": [],
         }
     if future_reports:
@@ -459,7 +459,7 @@ def main() -> int:
         print(json.dumps({
             "status": "ok",
             "guest_ledger_rows": sum(
-                len(payload.get("guest_ledger", {}).get(key, [])) for key in ("balances",)
+                len(payload.get("guest_ledger", {}).get(key, [])) for key in ("balances", "groups")
             ),
             "reservation_rows": len(payload.get("reservations", [])),
             "out": str(destination),

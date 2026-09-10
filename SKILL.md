@@ -8,7 +8,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.5"
+  version: "0.3.6"
 ---
 
 # ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit
@@ -41,7 +41,10 @@ never reuse report data from an earlier run.
    physical room number as `rooms_booked`.
 5. Run exactly one analysis/render command:
 
-   `python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out report-spec.json`
+   `python3 scripts/audit_pipeline.py audit_input.json --spec-out report-spec.json`
+
+   The default output filename is `PMS Reconciliation CAF15.pdf`; override it
+   with `-o <path>` when a different name is required.
 
 6. Deliver the generated PDF with a short findings summary. The command owns
    date windows, cancellation filtering, identity deduplication, match/category
