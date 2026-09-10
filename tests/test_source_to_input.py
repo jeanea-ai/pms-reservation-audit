@@ -1,4 +1,8 @@
 from pathlib import Path
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from scripts.audit_pipeline import build_report_spec
@@ -80,6 +84,80 @@ class SourceToInputTests(unittest.TestCase):
         spec, analysis = build_report_spec(payload)
         self.assertEqual(spec["audit_features"], ["guest_ledger", "duplicates"])
         self.assertEqual(analysis["counts"]["cancelled_excluded"], 0)
+
+    def test_partial_requested_scope_is_incomplete_and_actionable(self):
+        payload = build_audit_input(
+            guest_ledger_text=None,
+            future_reservation_texts=[self.activity],
+            property_local_date="2026-09-08",
+            reviewed_at="2026-09-08 17:00 America/Los_Angeles",
+            expected_features=["guest_ledger", "duplicates"],
+        )
+        self.assertFalse(payload["complete"])
+        self.assertEqual(payload["requested_features"], ["guest_ledger", "duplicates"])
+        self.assertIn("Guest Ledger review was not completed", payload["completion_warning"])
+        self.assertEqual(len(payload["limitations"]), 1)
+        self.assertIn("Should I retry it now", payload["next_question"])
+        spec, _ = build_report_spec(payload)
+        self.assertFalse(spec["complete"])
+        self.assertEqual(spec["date_ranges"]["ledger_past_30"], "Not searched in this audit.")
+
+    def test_partial_cli_emits_same_actionable_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "partial.json"
+            result = subprocess.run(
+                [
+                    sys.executable, "scripts/source_to_input.py",
+                    "--future-reservations", str(FIXTURES / "reservation_activity.txt"),
+                    "--property-local-date", "2026-09-08",
+                    "--reviewed-at", "2026-09-08 17:00 America/Los_Angeles",
+                    "--expected-feature", "guest_ledger",
+                    "--expected-feature", "duplicates",
+                    "-o", str(output),
+                ],
+                capture_output=True, text=True, check=False,
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary = json.loads(result.stdout)
+        self.assertFalse(summary["complete"])
+        self.assertEqual(summary["missing_features"], ["guest_ledger"])
+        self.assertEqual(summary["next_question"], payload["next_question"])
+
+    def test_intentionally_narrow_scope_can_complete(self):
+        payload = build_audit_input(
+            guest_ledger_text=None,
+            future_reservation_texts=[self.activity],
+            property_local_date="2026-09-08",
+            reviewed_at="2026-09-08 17:00 America/Los_Angeles",
+            expected_features=["duplicates"],
+        )
+        self.assertTrue(payload["complete"])
+        self.assertIsNone(payload["next_question"])
+
+    def test_reviewed_at_requires_matching_date_and_iana_zone(self):
+        common = {
+            "guest_ledger_text": self.ledger,
+            "future_reservation_texts": [],
+            "property_local_date": "2026-09-08",
+        }
+        for invalid in (
+            "nonsense",
+            "2026-09-08 17:00 PST",
+            "2026-09-09 17:00 America/Los_Angeles",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "reviewed_at"):
+                build_audit_input(reviewed_at=invalid, **common)
+
+    def test_future_report_printed_range_must_match_requested_window(self):
+        wrong_range = self.activity.replace("Arrival To: 9/8/2027", "Arrival To: 9/7/2027")
+        with self.assertRaisesRegex(ValueError, "printed range must be"):
+            build_audit_input(
+                guest_ledger_text=None,
+                future_reservation_texts=[wrong_range],
+                property_local_date="2026-09-08",
+                reviewed_at="2026-09-08 17:00 America/Los_Angeles",
+            )
 
     def test_future_report_outside_required_year_fails_closed(self):
         outside = self.activity.replace("9/9/26     9/10/26", "9/9/28     9/10/28")

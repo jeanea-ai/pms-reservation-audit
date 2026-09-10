@@ -77,6 +77,23 @@ class ReadinessTests(unittest.TestCase):
                 results = inspect(skill, {})
             self.assertIn(("SKIP", "live ChoiceADVANTAGE access", "confirm property, report visibility, and MFA state during the requested audit"), results)
 
+    def test_missing_pdf_verifier_fails_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+
+            def module_lookup(name):
+                return None if name == "pypdf" else True
+
+            with patch("scripts.readiness.importlib.util.find_spec", side_effect=module_lookup), \
+                    patch("scripts.readiness.find_chromium", return_value="chromium"), \
+                    patch("scripts.readiness.shutil.which", return_value=None):
+                results = inspect(skill, {})
+            self.assertIn((
+                "FAIL", "PDF structural verifier",
+                "install pypdf; PDF publication must fail closed without it",
+            ), results)
+
 
 if __name__ == "__main__":
     unittest.main()

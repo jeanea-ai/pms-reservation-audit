@@ -118,7 +118,10 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
         "scripts/audit_pipeline.py",
         "scripts/duplicate_analysis.py",
         "scripts/audit_report.py",
+        "scripts/scheduled_test_run.py",
+        "scripts/schedule_test.py",
         "assets/caf15_audit_report.pdf",
+        "assets/scheduled_test_input.json",
     ):
         path = skill_dir / relative
         results.append(_result("PASS" if path.is_file() else "FAIL", relative,
@@ -129,6 +132,13 @@ def inspect(skill_dir: Path, environ: dict[str, str] | None = None):
     results.append(_result("PASS" if reportlab or chromium else "FAIL", "PDF renderer",
                            "reportlab" if reportlab else "Chromium fallback" if chromium else
                            "install reportlab or Chromium"))
+
+    pypdf = importlib.util.find_spec("pypdf") is not None
+    results.append(_result(
+        "PASS" if pypdf else "FAIL",
+        "PDF structural verifier",
+        "pypdf" if pypdf else "install pypdf; PDF publication must fail closed without it",
+    ))
 
     pdftotext = shutil.which("pdftotext")
     pdfplumber = importlib.util.find_spec("pdfplumber") is not None

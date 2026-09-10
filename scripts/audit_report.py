@@ -397,8 +397,10 @@ def verify_pdf_structure(path, spec):
         raise RuntimeError("renderer did not create a valid PDF")
     try:
         from pypdf import PdfReader
-    except ImportError:
-        return "signature"
+    except ImportError as exc:
+        raise RuntimeError(
+            "pypdf is required for page-count, expected-text, and portrait verification"
+        ) from exc
     try:
         reader = PdfReader(str(candidate))
         if not reader.pages:

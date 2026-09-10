@@ -16,9 +16,15 @@ import shutil
 import subprocess
 import sys
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 MISSING = "Not displayed."
+SUPPORTED_FEATURES = ("guest_ledger", "duplicates")
+FEATURE_LABELS = {
+    "guest_ledger": "Guest Ledger",
+    "duplicates": "duplicate-reservation",
+}
 DATE_TOKEN = r"\d{1,2}/\d{1,2}/\d{2,4}"
 MONEY_TOKEN = r"\(?[\d,]+\.\d{2}\)?"
 LEDGER_ROW = re.compile(
@@ -57,15 +63,34 @@ def _metadata(text: str) -> dict[str, str]:
         "property_name": r"Property Name:\s*(.+?)\s*$",
         "property_code": r"Property Code:\s*([^\s]+)",
         "business_date": rf"Business Date:\s*({DATE_TOKEN})",
+        "arrival_from": rf"Arrival From:\s*({DATE_TOKEN})",
+        "arrival_to": rf"Arrival To:\s*({DATE_TOKEN})",
     }
     result = {}
     for key, pattern in patterns.items():
         match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
         if match:
             result[key] = match.group(1).strip()
-    if "business_date" in result:
-        result["business_date"] = _iso_date(result["business_date"])
+    for key in ("business_date", "arrival_from", "arrival_to"):
+        if key in result:
+            result[key] = _iso_date(result[key])
     return result
+
+
+def _reviewed_timestamp(value: str, property_local_date: date) -> str:
+    """Validate the documented owner-local timestamp and named IANA zone."""
+    text = value.strip()
+    try:
+        timestamp_text, zone_name = text.rsplit(" ", 1)
+        local_time = datetime.strptime(timestamp_text, "%Y-%m-%d %H:%M")
+        ZoneInfo(zone_name)
+    except (ValueError, ZoneInfoNotFoundError):
+        raise ValueError(
+            "reviewed_at must use 'YYYY-MM-DD HH:MM Area/Location' with a valid IANA zone"
+        ) from None
+    if local_time.date() != property_local_date:
+        raise ValueError("reviewed_at date must match property_local_date")
+    return f"{local_time:%Y-%m-%d %H:%M} {zone_name}"
 
 
 def _is_noise(line: str) -> bool:
@@ -346,14 +371,25 @@ def build_audit_input(
     reviewed_at: str,
     property_name: str | None = None,
     business_date: str | None = None,
+    expected_features: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     local_today = date.fromisoformat(property_local_date)
-    if not reviewed_at.strip():
-        raise ValueError("reviewed_at must include local time and named zone")
+    reviewed_at = _reviewed_timestamp(reviewed_at, local_today)
     ledger = parse_guest_ledger_text(guest_ledger_text) if guest_ledger_text else None
     future_reports = [parse_future_reservations_text(text) for text in future_reservation_texts]
     if ledger is None and not future_reports:
         raise ValueError("at least one Guest Ledger or Future Reservation report is required")
+
+    actual_features = (["guest_ledger"] if ledger else []) + (["duplicates"] if future_reports else [])
+    expected = list(expected_features) if expected_features is not None else list(actual_features)
+    if not expected:
+        raise ValueError("expected_features must contain at least one feature")
+    if len(expected) != len(set(expected)):
+        raise ValueError("expected_features must not contain duplicates")
+    unsupported = [feature for feature in expected if feature not in SUPPORTED_FEATURES]
+    if unsupported:
+        raise ValueError(f"unsupported expected feature(s): {unsupported}")
+    missing_features = [feature for feature in expected if feature not in actual_features]
 
     parsed_sources = ([ledger] if ledger else []) + future_reports
     source_metadata = [item["metadata"] for item in parsed_sources]
@@ -377,14 +413,28 @@ def build_audit_input(
         "schema_version": 1,
         "metadata": {
             "property": resolved_property,
-            "reviewed_at": reviewed_at.strip(),
+            "reviewed_at": reviewed_at,
             "business_date": resolved_business_date,
             "property_local_date": property_local_date,
         },
-        "complete": True,
+        "requested_features": expected,
+        "complete": not missing_features,
         "completion_warning": None,
         "limitations": [],
+        "next_question": None,
     }
+    if missing_features:
+        missing_labels = [FEATURE_LABELS[feature] for feature in missing_features]
+        joined = " and ".join(missing_labels)
+        payload["completion_warning"] = f"The {joined} review was not completed."
+        payload["limitations"] = [
+            f"The {FEATURE_LABELS[feature]} report was unavailable, so that requested review was not performed."
+            for feature in missing_features
+        ]
+        payload["next_question"] = (
+            f"The {joined} report could not be included. Should I retry it now, "
+            "or deliver the available results as an incomplete audit?"
+        )
     if ledger:
         ledger_start = local_today - timedelta(days=30)
         recent_balances = [
@@ -404,6 +454,16 @@ def build_audit_input(
             future_end = local_today.replace(year=local_today.year + 1)
         except ValueError:
             future_end = local_today.replace(year=local_today.year + 1, day=28)
+        for report in future_reports:
+            metadata = report["metadata"]
+            printed_start = metadata.get("arrival_from")
+            printed_end = metadata.get("arrival_to")
+            if printed_start != local_today.isoformat() or printed_end != future_end.isoformat():
+                raise ValueError(
+                    "Future Reservation printed range must be "
+                    f"{local_today} through {future_end} inclusive; got "
+                    f"{printed_start or 'missing'} through {printed_end or 'missing'}"
+                )
         payload["reservations"] = [
             reservation
             for report in future_reports
@@ -434,6 +494,13 @@ def main() -> int:
     parser.add_argument("--reviewed-at", required=True, help="owner-local timestamp with named zone")
     parser.add_argument("--property", help="property label; inferred from reports when omitted")
     parser.add_argument("--business-date", help="override report business date")
+    parser.add_argument(
+        "--expected-feature", action="append", choices=SUPPORTED_FEATURES,
+        help=(
+            "requested audit feature; repeat for a full audit. When omitted, the "
+            "provided reports define the requested scope"
+        ),
+    )
     parser.add_argument("-o", "--out", required=True, help="audit_input.json destination")
     args = parser.parse_args()
     try:
@@ -444,6 +511,7 @@ def main() -> int:
             reviewed_at=args.reviewed_at,
             property_name=args.property,
             business_date=args.business_date,
+            expected_features=args.expected_feature,
         )
         destination = Path(args.out)
         temporary = destination.with_name(f".{destination.name}.tmp")
@@ -455,6 +523,13 @@ def main() -> int:
                 len(payload.get("guest_ledger", {}).get(key, [])) for key in ("balances",)
             ),
             "reservation_rows": len(payload.get("reservations", [])),
+            "complete": payload["complete"],
+            "missing_features": [
+                feature for feature in payload["requested_features"]
+                if feature not in ((["guest_ledger"] if "guest_ledger" in payload else []) +
+                                   (["duplicates"] if "reservations" in payload else []))
+            ],
+            "next_question": payload["next_question"],
             "out": str(destination),
         }, sort_keys=True))
         return 0

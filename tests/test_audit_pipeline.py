@@ -53,6 +53,13 @@ class AuditPipelineTests(unittest.TestCase):
         self.assertEqual(rows[0][1], "A101, A102")
         self.assertNotIn("Confirmation", " ".join(map(str, rows[0])))
 
+    def test_future_report_wording_does_not_claim_invisible_status_filtering(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        spec, _ = build_report_spec(payload)
+        body = " ".join(spec["sections"][1]["body"])
+        self.assertIn("treated as reserved future inventory", body)
+        self.assertNotIn("cancelled reservations were excluded", body)
+
 
 if __name__ == "__main__":
     unittest.main()

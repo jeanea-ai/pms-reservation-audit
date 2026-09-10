@@ -12,8 +12,8 @@ chat summary:
    the past 30 days.
 
 2. **Duplicate reservation review** — pulls one Future Reservation Report from
-   local today through the same date next year, excludes cancelled
-   reservations, and flags overlapping stays that appear to belong to the same
+   local today through the same date next year, treats each exposed row as
+   reserved future inventory, and flags overlapping stays that appear to belong to the same
    person (exact / normalized / possible matches).
 
 3. **PDF report** — renders every review into a styled, easy-to-read PDF of no
@@ -79,6 +79,7 @@ naturally — for example:
 ## Validate
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 scripts/readiness.py
 python3 -m unittest discover -s tests
 ```
@@ -91,6 +92,8 @@ python3 scripts/source_to_input.py \
   --future-reservations future-reservations.pdf \
   --property-local-date 2026-09-08 \
   --reviewed-at "2026-09-08 17:00 America/Los_Angeles" \
+  --expected-feature guest_ledger \
+  --expected-feature duplicates \
   -o audit_input.json
 ```
 
@@ -102,3 +105,22 @@ python3 scripts/audit_pipeline.py audit_input.json -o report.pdf --spec-out repo
 
 The input is schema version `1`; reservation room counts use `rooms_booked` so
 physical room numbers cannot be mistaken for quantities.
+
+## Schedule a test-only report
+
+The repository includes an opt-in command-cron installer for synthetic report
+rendering. It never accesses ChoiceADVANTAGE and marks every artifact `TEST ONLY`.
+Preview without changing the pod:
+
+```bash
+python3 scripts/schedule_test.py \
+  --cron "15 9 * * *" \
+  --timezone America/Los_Angeles \
+  --output-dir /persistent/path/pms-audit-tests \
+  --dry-run
+```
+
+Remove `--dry-run` to create the command job. The safe default is `--no-deliver`;
+use `--announce-to kolo:<chat-id>` only for a verified destination. The installer
+checks the installed OpenClaw flags, uses `--command-argv`, explicit cwd/timezone
+and a 120-second timeout, and will not replace a same-named job.
