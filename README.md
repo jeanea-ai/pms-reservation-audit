@@ -12,9 +12,9 @@ chat summary:
    30 days plus every **Group** account regardless of arrival date or balance.
 
 2. **Duplicate reservation review** — pulls one Future Reservation Report from
-   local today through the same date next year, excludes cancelled
-   reservations, and flags overlapping stays that appear to belong to the same
-   person (exact / normalized / possible matches).
+   local today through the same date next year and flags overlapping listed
+   stays that appear to belong to the same person (exact / normalized /
+   possible matches). The source report does not display reservation status.
 
 3. **PDF report** — renders every review into a styled, easy-to-read PDF of no
    more than three pages
@@ -28,8 +28,11 @@ chat summary:
   reservation, folio, account, balance, or report.
 - **Fresh every run** — pulls current data from ChoiceADVANTAGE each time;
   never reuses a prior run's results.
-- **Credential-safe** — credentials are read from the host's secrets file at
-  run time; nothing is hardcoded in the skill.
+- **Credential-safe** — login identity, timezone, and password references come
+  from the existing PMS Setup property contract; password values resolve from
+  the host's established environment/secrets path at run time.
+- **Self-contained** — browser report-acquisition rules and one-shot PDF
+  verification ship with this skill; no report-pull helper is required.
 - **Low-input** — reuses a valid session and an unambiguous active/default
   property, pausing only for MFA, missing access, or unresolved property choice.
 - **Verified output** — every complete or partial audit produces one validated,
@@ -57,8 +60,8 @@ naturally — for example:
   python3 scripts/audit_report.py audit_spec.json -o report.pdf
   ```
 - `scripts/readiness.py` — read-only pod preflight for required files, renderer,
-  helper skill contract and optional declared version, top-level or
-  property-scoped credential JSON, property-time rules, and Kolo audit logging.
+  the bundled acquisition contract, top-level or property-scoped credential
+  secrets, property-time rules, and Kolo audit logging.
   Missing explicit timezone guidance is deferred to the live audit. It never
   displays credential values.
 - `scripts/report_spec.py` — strict required-field, section, table-shape,
@@ -70,6 +73,12 @@ naturally — for example:
 - `scripts/source_to_input.py` — parses fresh Guest Ledger and Future
   Reservation PDFs (or layout-preserving extracted text), reconciles printed
   subtotals/counts, and atomically writes schema-versioned `audit_input.json`.
+- `scripts/one_shot_pdf.py` — preserves the first original PDF response bytes,
+  rejects spent-key reuse, and verifies searchable parser input.
+- `scripts/pms_access.py` — resolves the existing PMS Setup property/login
+  contract without modifying it or printing credentials.
+- `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
+  procedure using the access contract created by PMS Setup.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
   validated spec, runs duplicate analysis, and atomically renders the PDF. It
   deliberately contains no login, browser, or ChoiceADVANTAGE automation.
@@ -84,7 +93,7 @@ python3 scripts/readiness.py
 python3 -m unittest discover -s tests
 ```
 
-After the existing browser/report-pull automation downloads fresh reports:
+After this skill's acquisition procedure saves the fresh source reports:
 
 ```bash
 python3 scripts/source_to_input.py \
