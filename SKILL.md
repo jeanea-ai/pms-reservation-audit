@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.0"
+version: "0.4.1"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
 ---
 
 # PMS Reconciliation
@@ -47,6 +47,12 @@ All access and report data are still real and read-only; describe resulting
 artifacts as test output and do not schedule or email them.
 
 ## Normal execution path
+
+Use a fresh, minimal worker/task for an audit run. After loading this file, do
+not inspect repository history, reread reference files, run readiness checks, or
+perform a narrative preflight unless the command reports that exact need. The
+execution budget is one shell command and one response of at most 250 words.
+The command itself uses no model calls.
 
 1. Resolve the property from the request, saved default, or unambiguous active
    property. Ask only if multiple properties remain ambiguous.

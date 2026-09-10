@@ -61,7 +61,12 @@ def _new_run_dir(root: Path, now: datetime) -> Path:
     return candidate
 
 
-def _failure(error: str, run_dir: Path | None = None) -> dict:
+def _failure(
+    error: str,
+    run_dir: Path | None = None,
+    *,
+    source_failures: dict[str, str] | None = None,
+) -> dict:
     payload = {
         "status": "failed",
         "error": error,
@@ -72,6 +77,8 @@ def _failure(error: str, run_dir: Path | None = None) -> dict:
     }
     if run_dir is not None:
         payload["run_dir"] = str(run_dir)
+    if source_failures:
+        payload["source_failures"] = source_failures
     return payload
 
 
@@ -145,7 +152,17 @@ def main() -> int:
                 failures[key] = str(exc)
 
         if not acquisition:
-            raise ReportPullError("neither required source report was captured")
+            print(
+                json.dumps(
+                    _failure(
+                        "neither required source report was captured",
+                        run_dir,
+                        source_failures=failures,
+                    ),
+                    sort_keys=True,
+                )
+            )
+            return 2
 
         guest_path = run_dir / REPORTS["guest-ledger"].filename
         future_path = run_dir / REPORTS["future-reservations"].filename

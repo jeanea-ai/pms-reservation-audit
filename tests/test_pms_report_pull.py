@@ -4,8 +4,9 @@ import base64
 from datetime import date
 import json
 import unittest
+from unittest.mock import patch
 
-from scripts.pms_login import CdpSession
+from scripts.pms_login import CdpSession, _page_websocket
 from scripts.pms_report_pull import (
     REPORTS,
     ReportPullError,
@@ -68,6 +69,33 @@ class FakeWebSocket:
 
 
 class PmsReportPullTests(unittest.TestCase):
+    def test_page_websocket_prefers_existing_choiceadvantage_page(self):
+        targets = [
+            {
+                "type": "page",
+                "url": "https://example.com/",
+                "webSocketDebuggerUrl": "ws://browser/first",
+            },
+            {
+                "type": "page",
+                "url": "https://www.choiceadvantage.com/choicehotels/Welcome.do",
+                "webSocketDebuggerUrl": "ws://browser/pms",
+            },
+        ]
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(targets).encode("utf-8")
+
+        with patch("scripts.pms_login.urllib.request.urlopen", return_value=Response()):
+            self.assertEqual(_page_websocket("http://browser"), "ws://browser/pms")
+
     def test_same_date_next_year_handles_leap_day(self):
         self.assertEqual(same_date_next_year(date(2024, 2, 29)), date(2025, 2, 28))
         self.assertEqual(same_date_next_year(date(2026, 9, 10)), date(2027, 9, 10))

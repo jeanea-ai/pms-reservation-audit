@@ -20,8 +20,15 @@ class PmsAuditRunTests(unittest.TestCase):
             self.assertTrue(second.is_dir())
 
     def test_failure_has_one_actionable_question(self):
-        payload = _failure("capture stopped")
+        payload = _failure(
+            "capture stopped",
+            source_failures={"guest-ledger": "report response was not an original PDF"},
+        )
         self.assertEqual(payload["status"], "failed")
+        self.assertEqual(
+            payload["source_failures"]["guest-ledger"],
+            "report response was not an original PDF",
+        )
         self.assertEqual(payload["next_question"].count("?"), 1)
         self.assertNotIn("traceback", payload["next_question"].casefold())
 

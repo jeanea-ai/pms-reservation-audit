@@ -102,9 +102,16 @@ def _page_websocket(cdp_url: str) -> str:
             targets = json.loads(response.read())
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise LoginError("the persistent browser CDP endpoint is unavailable") from exc
-    for target in targets:
-        if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
+    pages = [
+        target
+        for target in targets
+        if target.get("type") == "page" and target.get("webSocketDebuggerUrl")
+    ]
+    for target in pages:
+        if "choiceadvantage.com" in str(target.get("url") or "").casefold():
             return target["webSocketDebuggerUrl"]
+    if pages:
+        return pages[0]["webSocketDebuggerUrl"]
     raise LoginError("the persistent browser has no page target")
 
 
