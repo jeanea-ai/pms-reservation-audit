@@ -1,5 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
+version: "0.4.0"
 description: >
   On-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -8,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.7"
+  version: "0.4.0"
 ---
 
 # PMS Reconciliation
@@ -33,7 +34,7 @@ never reuse report data from an earlier run.
 4. Save the fresh Guest Ledger and Future Reservation Report as PDF
    files, then build the versioned input deterministically:
 
-   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" -o audit_input.json`
+   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" --expected-feature guest_ledger --expected-feature duplicates -o audit_input.json`
 
    The parser reconciles Guest Ledger subtotals and Future Reservation row
    counts to their printed totals and fails closed on a mismatch. It treats
@@ -56,8 +57,10 @@ credential, helper-skill, renderer, or platform change—not before every audit.
 
 If report extraction fails, refresh current browser state and make one retry
 using the report-pull skill's documented fallback. If it still fails, preserve
-the successful artifacts, mark the audit incomplete, and ask one actionable
-question. Do not begin open-ended browser experiments.
+the successful artifacts and run the same input command with every originally
+requested `--expected-feature` but only the successfully retrieved report file(s).
+The command marks the audit incomplete and prints one actionable `next_question`;
+ask that exact question. Do not hand-edit JSON or begin open-ended browser experiments.
 
 ## Authentication and access
 
@@ -144,3 +147,18 @@ result, say the PDF failed, and do not claim full delivery success.
 
 After delivery, log the result with `kolo log-action` without `--category`.
 
+## Command-cron test schedule
+
+Scheduling is test-only and opt-in. It renders the packaged synthetic fixture or
+another explicitly supplied non-live `audit_input.json`; it never logs in, opens a
+browser, accesses ChoiceADVANTAGE, or schedules stale PMS reports as a real audit.
+
+Preview the exact command job without changing the pod:
+
+`python3 scripts/schedule_test.py --cron "15 9 * * *" --timezone America/Los_Angeles --output-dir /persistent/path/pms-audit-tests --dry-run`
+
+Remove `--dry-run` to create it. By default the job uses `--no-deliver`; pass
+`--announce-to kolo:<chat-id>` only when that exact test destination is known.
+The installer refuses to replace or duplicate an existing job with the same name.
+Every generated PDF and filename says `TEST ONLY`. Use `openclaw cron list --json --all`
+to inspect the job. This facility is not a scheduler for live PMS audits.

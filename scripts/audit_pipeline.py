@@ -66,6 +66,9 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
         raise ValueError("input root must be a JSON object")
     if payload.get("schema_version") != 1:
         raise ValueError("schema_version must be 1")
+    test_mode = payload.get("test_mode", False)
+    if not isinstance(test_mode, bool):
+        raise ValueError("test_mode must be true or false when present")
     metadata = payload.get("metadata")
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be a JSON object")
@@ -130,7 +133,10 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
         }]
         sections.append({
             "heading": "2. Duplicate Reservation Review",
-            "body": ["Future Reservation Report only; cancelled reservations were excluded and all displayed duplicate groups have overlapping stays."],
+            "body": [
+                "Every row exposed by the Future Reservation Report was treated as reserved "
+                "future inventory; all displayed duplicate groups have overlapping stays."
+            ],
             "tables": tables,
             "notes": [],
         })
@@ -143,15 +149,27 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     complete = payload.get("complete")
     limitations = payload.get("limitations", [])
     spec = {
-        "title": "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit",
+        "title": (
+            "TEST ONLY — ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit"
+            if test_mode else "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit"
+        ),
         "property": metadata.get("property"),
         "reviewed_at": metadata.get("reviewed_at"),
         "business_date": metadata.get("business_date", MISSING),
         "date_ranges": {
-            "ledger_past_30": f"{windows['ledger_past_30'][0]} through {windows['ledger_past_30'][1]} inclusive",
-            "future_12_months": f"{windows['future_12_months'][0]} through {windows['future_12_months'][1]} inclusive",
+            "ledger_past_30": (
+                f"{windows['ledger_past_30'][0]} through {windows['ledger_past_30'][1]} inclusive"
+                if "guest_ledger" in features else "Not searched in this audit."
+            ),
+            "future_12_months": (
+                f"{windows['future_12_months'][0]} through {windows['future_12_months'][1]} inclusive"
+                if "duplicates" in features else "Not searched in this audit."
+            ),
         },
-        "disclaimer": "Read-only audit; no ChoiceADVANTAGE records were modified.",
+        "disclaimer": (
+            "TEST ONLY — generated from supplied non-live input; no ChoiceADVANTAGE records were accessed or modified."
+            if test_mode else "Read-only audit; no ChoiceADVANTAGE records were modified."
+        ),
         "complete": complete,
         "completion_warning": payload.get("completion_warning"),
         "audit_features": features,
@@ -178,6 +196,7 @@ def main() -> int:
         summary = {
             "status": "ok", "features": spec["audit_features"], "complete": spec["complete"],
             "post_processing_ms": round((perf_counter() - started) * 1000),
+            "next_question": payload.get("next_question"),
         }
         if analysis:
             summary["duplicate_counts"] = analysis["counts"]

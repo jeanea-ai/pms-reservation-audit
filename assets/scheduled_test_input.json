@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "property": "TEST PROPERTY — Synthetic Data",
+    "reviewed_at": "2026-09-08 12:00 America/Los_Angeles",
+    "business_date": "2026-09-07",
+    "property_local_date": "2026-09-08"
+  },
+  "complete": true,
+  "completion_warning": null,
+  "limitations": [],
+  "guest_ledger": {
+    "completion_statement": "Synthetic Guest Ledger data for command-cron testing.",
+    "balances": [
+      {
+        "guest_name": "Example Guest",
+        "status": "No Show",
+        "check_in": "2026-08-20",
+        "check_out": "2026-08-21",
+        "folio_number": "Not displayed.",
+        "account_number": "TEST-A1",
+        "confirmation_number": "Not displayed.",
+        "balance": -10.5
+      }
+    ],
+    "notes": ["Synthetic test data; not a live PMS result."]
+  },
+  "reservations": [
+    {
+      "guest_name": "Example Person 1",
+      "confirmation_number": "TEST-R1",
+      "folio_number": "Not displayed.",
+      "account_number": "TEST-A101",
+      "check_in": "2026-10-10",
+      "check_out": "2026-10-12",
+      "rooms_booked": 1,
+      "primary_email": "example@example.com",
+      "secondary_email": "Not displayed.",
+      "status": "Reserved"
+    },
+    {
+      "guest_name": "example person 2",
+      "confirmation_number": "TEST-R2",
+      "folio_number": "Not displayed.",
+      "account_number": "TEST-A102",
+      "check_in": "2026-10-11",
+      "check_out": "2026-10-13",
+      "rooms_booked": 1,
+      "primary_email": "example@example.com",
+      "secondary_email": "Not displayed.",
+      "status": "Reserved"
+    }
+  ]
+}

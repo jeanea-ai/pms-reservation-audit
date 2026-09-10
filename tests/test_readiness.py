@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,14 @@ from scripts.readiness import _check_report_pull, _check_secrets, _check_timezon
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_skill_release_versions_are_synchronized(self):
+        text = Path("SKILL.md").read_text(encoding="utf-8")
+        root = re.search(r'^version:\s*["\']?([^"\'\n]+)', text, re.MULTILINE)
+        metadata = re.search(r'^  version:\s*["\']?([^"\'\n]+)', text, re.MULTILINE)
+        self.assertIsNotNone(root)
+        self.assertIsNotNone(metadata)
+        self.assertEqual(root.group(1), metadata.group(1))
+
     def test_secrets_structure_is_checked_without_values_in_detail(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / ".secrets.json"
@@ -76,6 +85,23 @@ class ReadinessTests(unittest.TestCase):
             with patch("scripts.readiness.importlib.util.find_spec", return_value=None), patch("scripts.readiness.find_chromium", return_value=None), patch("scripts.readiness.shutil.which", return_value=None):
                 results = inspect(skill, {})
             self.assertIn(("SKIP", "live ChoiceADVANTAGE access", "confirm property, report visibility, and MFA state during the requested audit"), results)
+
+    def test_missing_pdf_verifier_fails_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+
+            def module_lookup(name):
+                return None if name == "pypdf" else True
+
+            with patch("scripts.readiness.importlib.util.find_spec", side_effect=module_lookup), \
+                    patch("scripts.readiness.find_chromium", return_value="chromium"), \
+                    patch("scripts.readiness.shutil.which", return_value=None):
+                results = inspect(skill, {})
+            self.assertIn((
+                "FAIL", "PDF structural verifier",
+                "install pypdf; PDF publication must fail closed without it",
+            ), results)
 
 
 if __name__ == "__main__":

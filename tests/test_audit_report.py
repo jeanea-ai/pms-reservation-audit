@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 
@@ -70,9 +71,10 @@ class AuditReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "report.pdf"
             output.write_bytes(b"%PDF-old")
-            with self.assertRaises(RuntimeError):
-                render_pdf_atomic(valid_spec(), output, reportlab_renderer=fail_reportlab,
-                                  chromium_renderer=fail_chromium, chromium_path="chromium")
+            with patch.dict(sys.modules, {"reportlab": ModuleType("reportlab")}):
+                with self.assertRaises(RuntimeError):
+                    render_pdf_atomic(valid_spec(), output, reportlab_renderer=fail_reportlab,
+                                      chromium_renderer=fail_chromium, chromium_path="chromium")
             self.assertEqual(output.read_bytes(), b"%PDF-old")
             self.assertEqual([item[0] for item in calls], ["reportlab", "chromium"])
 
@@ -94,6 +96,14 @@ class AuditReportTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "maximum is 3"):
                 render_pdf_atomic(valid_spec(180), output, chromium_path=None)
             self.assertFalse(output.exists())
+
+    def test_structural_verifier_is_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "signed-only.pdf"
+            output.write_bytes(b"%PDF-not-verified")
+            with patch.dict(sys.modules, {"pypdf": None}):
+                with self.assertRaisesRegex(RuntimeError, "pypdf is required"):
+                    verify_pdf_structure(output, valid_spec())
 
 
 if __name__ == "__main__":
