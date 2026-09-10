@@ -69,6 +69,9 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     metadata = payload.get("metadata")
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be a JSON object")
+    test_mode = payload.get("test_mode", False)
+    if not isinstance(test_mode, bool):
+        raise ValueError("test_mode must be true or false when present")
     try:
         today = date.fromisoformat(str(metadata["property_local_date"]))
     except (KeyError, ValueError):
@@ -146,7 +149,11 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     complete = payload.get("complete")
     limitations = payload.get("limitations", [])
     spec = {
-        "title": "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit",
+        "title": (
+            "TEST ONLY — ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit"
+            if test_mode
+            else "ChoiceADVANTAGE Guest Ledger & Duplicate Reservation Audit"
+        ),
         "property": metadata.get("property"),
         "reviewed_at": metadata.get("reviewed_at"),
         "business_date": metadata.get("business_date", MISSING),
@@ -160,7 +167,11 @@ def build_report_spec(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str
                 if "duplicates" in features else "Not searched in this audit."
             ),
         },
-        "disclaimer": "Read-only audit; no ChoiceADVANTAGE records were modified.",
+        "disclaimer": (
+            "TEST ONLY — Read-only audit; no ChoiceADVANTAGE records were modified."
+            if test_mode
+            else "Read-only audit; no ChoiceADVANTAGE records were modified."
+        ),
         "complete": complete,
         "completion_warning": payload.get("completion_warning"),
         "audit_features": features,

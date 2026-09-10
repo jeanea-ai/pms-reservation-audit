@@ -57,8 +57,26 @@ the browser snapshot after navigation and select the exact report name.
 
 - Guest Ledger: keep its current/default business-date parameters.
 - Future Reservations: set the start to property-local today and the end to
-  the same calendar date next year, inclusive. Dispatch `input` and
-  `change` events and verify the displayed values.
+  the same calendar date next year, inclusive. Leave both Booking Date fields
+  blank. Dispatch `input` and `change` events and verify all four displayed
+  values.
+
+Live form contract verified against ChoiceADVANTAGE build 10.283.3 on
+2026-09-10:
+
+- Menu IDs: `GuestLedgerReport` and `FutureReservationsReport`.
+- Submit ID: `doSubmit`, with exact visible label `Submit`.
+- Guest Ledger default date: `queryDatePast`; do not replace it.
+- Guest Ledger PDF form: `genericReportsForm` whose action contains
+  `ReportProxyServlet.proxy`.
+- Future Reservations PDF form: `ReportFutureReservationsForm`; arrival fields
+  are `arrivalDateFrom` and `arrivalDateTo`, booking fields are
+  `bookingDateFrom` and `bookingDateTo`.
+
+`scripts/pms_report_pull.py` owns this contract. It temporarily changes the PDF
+form target from `_blank` to `_self` after arming CDP capture, keeping the
+single-use response on the already-attached page target. Agents must not repeat
+these DOM operations themselves.
 
 ## Capture the one-shot source PDF
 
@@ -90,3 +108,9 @@ final PMS Reconciliation PDF.
 
 Return the saved source path, report name, property code, and effective date
 range. Never return the report key.
+
+The supported implementation is `scripts/pms_report_pull.py`, normally called
+only through `scripts/pms_audit_run.py`. Browser tools, `Page.printToPDF`, PDF
+viewer downloads, screenshots, OCR, and hand-written capture scripts are not
+fallbacks. After the command's bounded retry is exhausted, ask its emitted
+`next_question` and stop.

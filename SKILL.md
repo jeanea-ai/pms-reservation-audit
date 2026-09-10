@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.3.9"
+version: "0.4.0"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.3.9"
+  version: "0.4.0"
 ---
 
 # PMS Reconciliation
@@ -48,43 +48,24 @@ artifacts as test output and do not schedule or email them.
 
 ## Normal execution path
 
-1. Reuse a valid authenticated ChoiceADVANTAGE session when available.
-   Otherwise read [references/report-acquisition.md](references/report-acquisition.md)
-   and follow its login, report-navigation, trusted-click, and original-response
-   capture procedure. This skill uses the property access created by
-   `mf-hotel-pms-setup`; it does not require a report-pull helper. Do not invent
-   another browser/CDP method during an audit.
-   For standalone testing, run the deterministic `pms_login.py` command above so
-   credentials pass directly from the protected source to the browser without
-   appearing in agent context or command-line arguments.
-   ChoiceADVANTAGE report keys are single-use. The first response containing
-   `%PDF-` bytes is the report artifact, not a probe: save it immediately and
-   never submit that key again. An empty response means the key is spent; reopen
-   the report parameters, generate a new key, and make one bounded retry.
-2. Resolve the property from the request, saved default, or unambiguous active
-   property. Ask only if multiple properties remain ambiguous. Pause for MFA or
-   expired access.
-3. Pull the requested fresh report(s) and extract every applicable record. For
-   a full audit pull the Guest Ledger plus one Future Reservation Report whose
-   start date is local today and whose end date is the same calendar date next
-   year (12 months ahead), both inclusive.
-4. Save the fresh Guest Ledger and Future Reservation Report as PDF
-   files, then build the versioned input deterministically:
+1. Resolve the property from the request, saved default, or unambiguous active
+   property. Ask only if multiple properties remain ambiguous.
+2. Run exactly one bounded command; do not navigate the reports UI with browser
+   tools and do not invent another CDP, download, print, screenshot, or OCR path:
 
-   `python3 scripts/source_to_input.py --guest-ledger guest-ledger.pdf --future-reservations future-reservations.pdf --property-local-date YYYY-MM-DD --reviewed-at "YYYY-MM-DD HH:MM America/Los_Angeles" --expected-feature guest_ledger --expected-feature duplicates -o audit_input.json`
+   `python3 scripts/pms_audit_run.py --hotel <CODE> --output-root <persistent-directory>`
 
-   The parser reconciles Guest Ledger subtotals and Future Reservation row
-   counts to their printed totals and fails closed on a mismatch. It treats
-   each Future Reservation line as one room record and never reinterprets a
-   physical room number as `rooms_booked`.
-5. Run exactly one analysis/render command:
+   For explicitly authorized standalone access, add `--test-access
+   --allow-skip-mfa`. When the operator has already signed in manually for a
+   one-time test, use `--session-only --timezone <IANA-zone>` instead. Never put
+   `--session-only` on a schedule.
 
-   `python3 scripts/audit_pipeline.py audit_input.json --spec-out report-spec.json`
-
-   The default output filename is `PMS Reconciliation CAF15.pdf`; override it
-   with `-o <path>` when a different name is required.
-
-6. Deliver the generated PDF with a short findings summary. The command owns
+   The command owns authentication, exact report selection, property-local date
+   entry, original-response capture, the single fresh-key retry, searchable-PDF
+   verification, source parsing, subtotal/count reconciliation, duplicate
+   analysis, test labeling, and atomic rendering. It produces redacted JSON and
+   never prints report contents or credentials.
+3. Deliver the generated PDF with a short findings summary. The command owns
    date windows, cancellation filtering, identity deduplication, match/category
    decisions, totals, spec validation, structural PDF verification, retry, and
    atomic publication. Do not redo those stages in chat.
@@ -92,15 +73,9 @@ artifacts as test output and do not schedule or email them.
 Run `python3 scripts/readiness.py` only after installation or an environment,
 credential, renderer, or platform change—not before every audit.
 
-If report retrieval or extraction fails, refresh current browser state and make
-one retry using a newly generated report key and the acquisition reference's
-documented fallback. Never retry a spent key. If one report still fails,
-preserve the successful artifact and run the same input command with every
-originally requested `--expected-feature` but only the successfully retrieved
-report file. The command marks the audit incomplete and prints one actionable
-`next_question`; ask that exact question. If neither report was retrieved, run
-the command with the expected features and no report arguments; ask the emitted
-`next_question`. Do not hand-edit JSON or begin open-ended browser experiments.
+If the command fails or produces an incomplete audit, ask its exact
+`next_question`. Do not retry it in the same turn, hand-edit JSON, inspect guest
+records in chat, or begin open-ended browser experiments.
 
 ## Authentication and access
 

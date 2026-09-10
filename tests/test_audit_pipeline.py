@@ -62,6 +62,19 @@ class AuditPipelineTests(unittest.TestCase):
         self.assertIn("treated as reserved future inventory", body)
         self.assertNotIn("cancelled reservations were excluded", body)
 
+    def test_test_mode_is_visibly_labeled(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload["test_mode"] = True
+        spec, _ = build_report_spec(payload)
+        self.assertTrue(spec["title"].startswith("TEST ONLY"))
+        self.assertTrue(spec["disclaimer"].startswith("TEST ONLY"))
+
+    def test_test_mode_must_be_boolean(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        payload["test_mode"] = "yes"
+        with self.assertRaisesRegex(ValueError, "true or false"):
+            build_report_spec(payload)
+
 
     def test_pipeline_default_output_filename_is_pms_reconciliation_caf15(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -37,11 +37,13 @@ class CdpSession:
             websocket_url, timeout=10, suppress_origin=True
         )
         self._next_id = 0
+        self._events: list[dict] = []
 
     def close(self) -> None:
         self._ws.close()
 
     def call(self, method: str, params: dict | None = None) -> dict:
+        self._ws.settimeout(10)
         self._next_id += 1
         call_id = self._next_id
         self._ws.send(
@@ -50,10 +52,30 @@ class CdpSession:
         while True:
             message = json.loads(self._ws.recv())
             if message.get("id") != call_id:
+                if message.get("method"):
+                    self._events.append(message)
                 continue
             if "error" in message:
                 raise LoginError(f"browser command failed: {message['error'].get('message', 'unknown error')}")
             return message.get("result", {})
+
+    def clear_events(self) -> None:
+        self._events.clear()
+
+    def next_event(self, timeout: float) -> dict:
+        """Return the next CDP event without losing events seen during calls."""
+        if self._events:
+            return self._events.pop(0)
+        if timeout <= 0:
+            raise LoginError("browser event wait timed out")
+        self._ws.settimeout(timeout)
+        while True:
+            try:
+                message = json.loads(self._ws.recv())
+            except Exception as exc:
+                raise LoginError("browser event wait timed out") from exc
+            if message.get("method"):
+                return message
 
     def evaluate(self, expression: str, *, user_gesture: bool = False):
         result = self.call(

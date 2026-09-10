@@ -84,6 +84,11 @@ naturally — for example:
   ChoiceADVANTAGE browser, reuses an authenticated session, and in standalone
   test mode can select only the exact official **Skip MFA** control when
   explicitly authorized.
+- `scripts/pms_report_pull.py` — selects the two exact reports, sets the required
+  arrival window, captures the original PDF response in the same browser target,
+  and permits only one fresh-parameter retry.
+- `scripts/pms_audit_run.py` — the single bounded entrypoint for login, both
+  source pulls, parsing, reconciliation, analysis, and final PDF rendering.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
   procedure using the access contract created by PMS Setup.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
@@ -116,6 +121,19 @@ Then run:
 python3 scripts/readiness.py --test-access --hotel CAF15
 python3 scripts/pms_login.py --hotel CAF15 --test-access --allow-skip-mfa
 ```
+
+Or run the entire bounded test in one command:
+
+```bash
+python3 scripts/pms_audit_run.py \
+  --hotel CAF15 \
+  --test-access --allow-skip-mfa \
+  --output-root /persistent/path/pms-audit-tests
+```
+
+If the operator already authenticated manually in the persistent browser, use
+`--session-only --timezone America/Los_Angeles` for that one test. Session-only
+runs are never suitable for cron.
 
 The second command prints only a redacted JSON state. While ChoiceADVANTAGE
 offers the official option, it selects the exact **Skip MFA** control on each
