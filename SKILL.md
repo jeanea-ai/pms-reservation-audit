@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.3"
+version: "0.4.4"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,14 +9,15 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.3"
+  version: "0.4.4"
 ---
 
 # PMS Reconciliation
 
-Run this on demand only. It is strictly read-only: never edit, cancel, merge,
-create, or otherwise modify any PMS record. Every audit must use fresh reports;
-never reuse report data from an earlier run.
+Run this on demand unless the operator explicitly requests a temporary test
+schedule. It is strictly read-only: never edit, cancel, merge, create, or
+otherwise modify any PMS record. Every audit must use fresh reports; never reuse
+report data from an earlier run.
 
 ## Standalone test access
 
@@ -44,7 +45,8 @@ ChoiceADVANTAGE offers that official option. It must not match approximate label
 bypass another challenge, migrate the account, or store an OTP/MFA token. If the
 exact control is absent, stop with `needs_mfa` and let the operator complete MFA.
 All access and report data are still real and read-only; describe resulting
-artifacts as test output and do not schedule or email them.
+artifacts as test output and never email them. Schedule only an explicitly
+requested, bounded command-cron test.
 
 ## Normal execution path
 
@@ -65,6 +67,13 @@ The command itself uses no model calls.
    --allow-skip-mfa`. When the operator has already signed in manually for a
    one-time test, use `--session-only --timezone <IANA-zone>` instead. Never put
    `--session-only` on a schedule.
+
+   When the operator explicitly accepts Chrome's saved credentials for temporary
+   cron testing, add `--browser-saved-login`, `--timezone <IANA-zone>`, and
+   `--allow-skip-mfa`. This path checks only whether both login fields autofilled;
+   it never reads or returns their values. It reuses an active session first and
+   stops if autofill or the exact official **Skip MFA** control is unavailable.
+   Treat it as test-only, not as production credential storage.
 
    The command owns authentication, exact report selection, property-local date
    entry, original-response capture, the single fresh-key retry, searchable-PDF
@@ -92,8 +101,10 @@ records in chat, or begin open-ended browser experiments.
 
 ## Authentication and access
 
-- Credentials come from the configured secrets file at runtime. Never display
-  them or ask the owner to paste them into chat or skill instructions.
+- Credentials come from the configured secrets file at runtime, except for the
+  explicitly authorized temporary browser-saved test path. Never display them,
+  read autofilled values, or ask the owner to paste them into chat or skill
+  instructions.
 - On the Okta migration interstitial choose **Continue**, not **Migrate**.
 - Outside explicitly authorized standalone testing, never bypass MFA. During an
   authorized test login, only the exact official **Skip MFA** control may be

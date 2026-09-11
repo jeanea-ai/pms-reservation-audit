@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from scripts.pms_login import (
+    _browser_saved_fields_present,
     _click_traditional_login_continue,
     _has_traditional_login_continue,
     _is_authenticated,
@@ -42,6 +43,22 @@ class PmsLoginTests(unittest.TestCase):
         rendered = "\n".join(session.expressions)
         self.assertIn("formSubmit", rendered)
         self.assertNotIn("logoutThenRedirect", rendered)
+
+    def test_browser_saved_login_checks_presence_without_returning_values(self):
+        class FakeSession:
+            def __init__(self):
+                self.expressions = []
+
+            def evaluate(self, expression, **kwargs):
+                self.expressions.append(expression)
+                return True
+
+        session = FakeSession()
+        self.assertTrue(_browser_saved_fields_present(session))
+        rendered = "\n".join(session.expressions)
+        self.assertIn("value.length", rendered)
+        self.assertNotIn("return username.value", rendered)
+        self.assertNotIn("return password.value", rendered)
 
 
 if __name__ == "__main__":

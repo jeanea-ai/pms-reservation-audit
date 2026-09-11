@@ -135,6 +135,15 @@ If the operator already authenticated manually in the persistent browser, use
 `--session-only --timezone America/Los_Angeles` for that one test. Session-only
 runs are never suitable for cron.
 
+For temporary cron testing when the operator has explicitly accepted Chrome's
+saved credentials, add `--browser-saved-login`,
+`--timezone America/Los_Angeles`, and `--allow-skip-mfa`. This mode first reuses
+an active session; after logout it
+clicks Login only when Chrome has already autofilled both fields. It checks
+presence without reading or returning either value, and stops if autofill or
+the exact official **Skip MFA** option is unavailable. This is not the
+production credential path.
+
 The second command prints only a redacted JSON state. While ChoiceADVANTAGE
 offers the official option, it selects the exact **Skip MFA** control on each
 new login. If the option disappears, it returns `needs_mfa` instead of attempting

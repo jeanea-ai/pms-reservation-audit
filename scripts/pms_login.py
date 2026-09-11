@@ -234,6 +234,130 @@ def _looks_like_mfa(snapshot: dict) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _browser_saved_fields_present(session: CdpSession) -> bool:
+    """Check autofill presence without returning either credential value."""
+    return bool(
+        session.evaluate(
+            """(() => {
+              const username = document.querySelector('input[name="j_username"]');
+              const password = document.querySelector('input[name="j_password"]');
+              return !!username && !!password &&
+                     username.value.length > 0 && password.value.length > 0;
+            })()"""
+        )
+    )
+
+
+def _finish_login(
+    session: CdpSession,
+    snapshot: dict,
+    *,
+    allow_skip_mfa: bool,
+) -> dict[str, object]:
+    # This is the account-migration deferral, not the temporary MFA skip.
+    if _has_traditional_login_continue(session) and "migrat" in str(
+        snapshot.get("body", "")
+    ).casefold():
+        before_click = snapshot
+        _click_traditional_login_continue(session)
+        snapshot = _wait_for_settle(session, changed_from=before_click)
+
+    mfa_skipped = False
+    if _has_exact_control(session, SKIP_MFA_LABEL):
+        if not allow_skip_mfa:
+            return {
+                "status": "needs_mfa",
+                "next_question": (
+                    "ChoiceADVANTAGE is offering Skip MFA. May I select it for this "
+                    "test login?"
+                ),
+            }
+        _click_exact_control(session, SKIP_MFA_LABEL)
+        mfa_skipped = True
+        snapshot = _wait_for_settle(session, changed_from=snapshot)
+    elif _looks_like_mfa(snapshot):
+        return {
+            "status": "needs_mfa",
+            "next_question": (
+                "Skip MFA is unavailable. Please complete MFA in the persistent "
+                "browser, then retry the test."
+            ),
+        }
+
+    session.navigate(REPORTS_URL)
+    snapshot = _wait_for_settle(session)
+    if not _is_authenticated(snapshot):
+        raise LoginError("ChoiceADVANTAGE did not reach the report menu after login")
+    return {
+        "status": "authenticated",
+        "session_reused": False,
+        "mfa_skipped": mfa_skipped,
+    }
+
+
+def login_with_browser_saved_access(
+    *,
+    cdp_url: str = DEFAULT_CDP_URL,
+    allow_skip_mfa: bool = False,
+    autofill_timeout: float = 15.0,
+) -> dict[str, object]:
+    """Login by clicking already-autofilled browser fields without reading them."""
+    session = CdpSession(_page_websocket(cdp_url))
+    try:
+        session.call("Page.enable")
+        session.navigate(REPORTS_URL)
+        snapshot = _wait_for_settle(session)
+        if _is_authenticated(snapshot):
+            return {
+                "status": "authenticated",
+                "session_reused": True,
+                "mfa_skipped": False,
+                "browser_saved_access": True,
+            }
+
+        session.navigate(SIGN_IN_URL)
+        snapshot = _wait_for_settle(session)
+        if not snapshot.get("hasLogin"):
+            raise LoginError("ChoiceADVANTAGE login fields were not found")
+        deadline = time.monotonic() + autofill_timeout
+        filled = False
+        while time.monotonic() < deadline:
+            filled = _browser_saved_fields_present(session)
+            if filled:
+                break
+            time.sleep(0.2)
+        if not filled:
+            raise LoginError(
+                "saved browser credentials did not autofill the ChoiceADVANTAGE login"
+            )
+        submitted = session.evaluate(
+            """(() => {
+              const username = document.querySelector('input[name="j_username"]');
+              const password = document.querySelector('input[name="j_password"]');
+              if (!username?.value || !password?.value) return false;
+              const submit = [...document.querySelectorAll('button,input[type=submit],a')]
+                .find(node => /^(login|sign in)$/i.test(
+                  (node.textContent || node.value || '').trim()));
+              if (!submit) return false;
+              submit.click();
+              return true;
+            })()""",
+            user_gesture=True,
+        )
+        if not submitted:
+            raise LoginError("ChoiceADVANTAGE login control was not found")
+        snapshot = _wait_for_settle(session, changed_from=snapshot)
+        result = _finish_login(
+            session,
+            snapshot,
+            allow_skip_mfa=allow_skip_mfa,
+        )
+        result["browser_saved_access"] = True
+        return result
+    finally:
+        session.close()
+
+
 def login(
     access: dict[str, object],
     *,
@@ -278,37 +402,11 @@ def login(
             raise LoginError("ChoiceADVANTAGE login control was not found")
         snapshot = _wait_for_settle(session, changed_from=snapshot)
 
-        # This is the account-migration deferral, not the temporary MFA skip.
-        if _has_traditional_login_continue(session) and "migrat" in str(snapshot.get("body", "")).casefold():
-            before_click = snapshot
-            _click_traditional_login_continue(session)
-            snapshot = _wait_for_settle(session, changed_from=before_click)
-
-        mfa_skipped = False
-        if _has_exact_control(session, SKIP_MFA_LABEL):
-            if not allow_skip_mfa:
-                return {
-                    "status": "needs_mfa",
-                    "next_question": "ChoiceADVANTAGE is offering Skip MFA. May I select it for this test login?",
-                }
-            _click_exact_control(session, SKIP_MFA_LABEL)
-            mfa_skipped = True
-            snapshot = _wait_for_settle(session, changed_from=snapshot)
-        elif _looks_like_mfa(snapshot):
-            return {
-                "status": "needs_mfa",
-                "next_question": "Skip MFA is unavailable. Please complete MFA in the persistent browser, then retry the test.",
-            }
-
-        session.navigate(REPORTS_URL)
-        snapshot = _wait_for_settle(session)
-        if not _is_authenticated(snapshot):
-            raise LoginError("ChoiceADVANTAGE did not reach the report menu after login")
-        return {
-            "status": "authenticated",
-            "session_reused": False,
-            "mfa_skipped": mfa_skipped,
-        }
+        return _finish_login(
+            session,
+            snapshot,
+            allow_skip_mfa=allow_skip_mfa,
+        )
     finally:
         session.close()
 

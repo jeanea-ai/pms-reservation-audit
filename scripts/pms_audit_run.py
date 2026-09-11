@@ -20,6 +20,7 @@ try:
         LoginError,
         _page_websocket,
         login,
+        login_with_browser_saved_access,
     )
     from scripts.pms_report_pull import REPORTS, ReportPullError, pull_report
     from scripts.source_to_input import build_audit_input, read_report_text
@@ -33,6 +34,7 @@ except ModuleNotFoundError:
         LoginError,
         _page_websocket,
         login,
+        login_with_browser_saved_access,
     )
     from pms_report_pull import REPORTS, ReportPullError, pull_report
     from source_to_input import build_audit_input, read_report_text
@@ -127,22 +129,33 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hotel", required=True)
     parser.add_argument("--output-root", required=True, type=Path)
-    parser.add_argument("--timezone", help="IANA timezone; required with --session-only")
+    parser.add_argument(
+        "--timezone",
+        help="IANA timezone; required with --session-only or --browser-saved-login",
+    )
     parser.add_argument("--session-only", action="store_true")
+    parser.add_argument("--browser-saved-login", action="store_true")
     parser.add_argument("--test-access", action="store_true")
     parser.add_argument("--test-access-file", type=Path)
     parser.add_argument("--allow-skip-mfa", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
     args = parser.parse_args()
-    if args.session_only and (args.test_access or args.test_access_file or args.allow_skip_mfa):
+    if args.session_only and (
+        args.browser_saved_login
+        or args.test_access
+        or args.test_access_file
+        or args.allow_skip_mfa
+    ):
         parser.error("--session-only cannot be combined with login or MFA options")
-    if args.session_only and not args.timezone:
-        parser.error("--timezone is required with --session-only")
+    if args.browser_saved_login and (args.test_access or args.test_access_file):
+        parser.error("--browser-saved-login cannot be combined with test-access inputs")
+    if (args.session_only or args.browser_saved_login) and not args.timezone:
+        parser.error("--timezone is required with browser-only access modes")
     if args.test_access_file and not args.test_access:
         parser.error("--test-access-file requires --test-access")
-    if args.allow_skip_mfa and not args.test_access:
-        parser.error("--allow-skip-mfa requires --test-access")
+    if args.allow_skip_mfa and not (args.test_access or args.browser_saved_login):
+        parser.error("--allow-skip-mfa requires an explicit test login mode")
     if not 1 <= args.timeout_seconds <= 120:
         parser.error("--timeout-seconds must be between 1 and 120")
 
@@ -151,7 +164,15 @@ def main() -> int:
     try:
         access = None
         timezone_name = args.timezone
-        if not args.session_only:
+        if args.browser_saved_login:
+            login_result = login_with_browser_saved_access(
+                cdp_url=args.cdp_url,
+                allow_skip_mfa=args.allow_skip_mfa,
+            )
+            if login_result["status"] != "authenticated":
+                print(json.dumps(login_result, sort_keys=True))
+                return 3
+        elif not args.session_only:
             access = resolve_access(
                 args.hotel,
                 allow_test_access=args.test_access,
@@ -216,7 +237,9 @@ def main() -> int:
             reviewed_at=f"{now:%Y-%m-%d %H:%M} {timezone_name}",
             expected_features=["guest_ledger", "duplicates"],
         )
-        test_only = bool(args.test_access or args.session_only)
+        test_only = bool(
+            args.test_access or args.session_only or args.browser_saved_login
+        )
         payload["test_mode"] = test_only
         input_path = run_dir / "audit-input.json"
         _atomic_json(input_path, payload)

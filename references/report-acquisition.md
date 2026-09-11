@@ -34,6 +34,11 @@ use `resolve_access(..., allow_test_access=True)` through
 owner-only file contract are documented in `SKILL.md`; never place the file in
 the repository or pass credentials as command-line values.
 
+For explicitly authorized temporary testing, `--browser-saved-login` may reuse
+Chrome's saved login. It selects the same exact field names below and receives
+only one Boolean stating whether both fields are nonempty; it must never return,
+log, or inspect either value. This path is not the production credential store.
+
 ## Login
 
 1. Open `https://www.choiceadvantage.com/choicehotels/sign_in.jsp`.
@@ -48,6 +53,12 @@ the repository or pass credentials as command-line values.
    the exact official **Skip MFA** control once per login when ChoiceADVANTAGE
    displays it. If it is absent, pause for the operator. Normal access must never
    bypass MFA.
+
+The login contract uses stable DOM semantics rather than visual interpretation:
+`input[name="j_username"]`, `input[name="j_password"]`, an exact **Login** or
+**Sign in** control, the traditional-login **Continue** handler, and the exact
+**Skip MFA** label. If any required selector or exact control is absent, stop;
+never guess from screen position, screenshots, OCR, or approximate text.
 
 ## Navigate and set parameters
 
