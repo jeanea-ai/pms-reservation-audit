@@ -98,18 +98,34 @@ def build_create_command(
     hotel = args.hotel.strip().upper()
     name = _job_name(args.name, hotel)
     output_root = Path(args.output_root).expanduser().resolve()
-    runner_argv = [
-        python,
-        str(skill_dir / "scripts" / "pms_audit_run.py"),
-        "--hotel",
-        hotel,
-        "--timeout-seconds",
-        str(args.audit_timeout_seconds),
-        "--overall-timeout-seconds",
-        str(args.overall_timeout_seconds),
-        "--output-root",
-        str(output_root),
-    ]
+    if args.announce_to:
+        runner_argv = [
+            python,
+            str(skill_dir / "scripts" / "scheduled_audit_run.py"),
+            "--hotel",
+            hotel,
+            "--audit-timeout-seconds",
+            str(args.audit_timeout_seconds),
+            "--overall-timeout-seconds",
+            str(args.overall_timeout_seconds),
+            "--output-root",
+            str(output_root),
+            "--delivery-to",
+            args.announce_to,
+        ]
+    else:
+        runner_argv = [
+            python,
+            str(skill_dir / "scripts" / "pms_audit_run.py"),
+            "--hotel",
+            hotel,
+            "--timeout-seconds",
+            str(args.audit_timeout_seconds),
+            "--overall-timeout-seconds",
+            str(args.overall_timeout_seconds),
+            "--output-root",
+            str(output_root),
+        ]
     command = [openclaw, "cron", "create", "--name", name]
     if args.cron:
         command.extend(["--cron", _cron_expression(args.cron), "--tz", args.timezone])

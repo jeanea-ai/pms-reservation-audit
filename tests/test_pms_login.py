@@ -73,6 +73,17 @@ class PmsLoginTests(unittest.TestCase):
                 ]
             )
 
+    def test_target_selection_refuses_unrelated_tab(self):
+        with self.assertRaisesRegex(Exception, "no exact ChoiceADVANTAGE"):
+            _select_page_target(
+                [
+                    {
+                        "url": "https://example.test/private-work",
+                        "webSocketDebuggerUrl": "ws://unrelated",
+                    }
+                ]
+            )
+
     def test_page_change_signature_includes_body(self):
         before = {"url": "https://example.test/Login.do", "title": "Choice", "ready": "complete", "body": "Login"}
         after = {**before, "body": "Skip MFA"}

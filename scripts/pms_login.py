@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from urllib.parse import urlparse
 
@@ -31,6 +32,10 @@ class LoginError(RuntimeError):
 
 class BrowserChallenge(LoginError):
     """Raised when the site presents an access-control or human-verification challenge."""
+
+
+class NoChoiceTarget(LoginError):
+    """Raised when the persistent browser has no ChoiceADVANTAGE page."""
 
 
 class CdpSession:
@@ -135,12 +140,8 @@ def _select_page_target(pages: list[dict]) -> dict:
     best_priority = max(priority(target) for target in pages)
     if best_priority > 0:
         matches = [target for target in pages if priority(target) == best_priority]
-    elif len(pages) == 1:
-        matches = pages
     else:
-        raise LoginError(
-            "the persistent browser has multiple pages and no exact ChoiceADVANTAGE target"
-        )
+        raise NoChoiceTarget("the persistent browser has no exact ChoiceADVANTAGE target")
     if len(matches) != 1:
         raise LoginError(
             "the persistent browser has multiple equally valid ChoiceADVANTAGE targets"
@@ -159,7 +160,27 @@ def _page_websocket(cdp_url: str) -> str:
         for target in targets
         if target.get("type") == "page" and target.get("webSocketDebuggerUrl")
     ]
-    return _select_page_target(pages)["webSocketDebuggerUrl"]
+    try:
+        return _select_page_target(pages)["webSocketDebuggerUrl"]
+    except NoChoiceTarget:
+        # Create a dedicated page instead of replacing an unrelated user tab.
+        request = urllib.request.Request(
+            f"{cdp_url.rstrip('/')}/json/new?{urllib.parse.quote(SIGN_IN_URL, safe='')}",
+            method="PUT",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                target = json.loads(response.read())
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            raise LoginError(
+                "the persistent browser could not create a dedicated ChoiceADVANTAGE page"
+            ) from exc
+        websocket_url = target.get("webSocketDebuggerUrl")
+        if not isinstance(websocket_url, str) or not websocket_url:
+            raise LoginError(
+                "the persistent browser created a page without a CDP websocket"
+            )
+        return websocket_url
 
 
 def _snapshot(session: CdpSession) -> dict:

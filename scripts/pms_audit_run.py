@@ -160,8 +160,16 @@ class AuditTerminated(RuntimeError):
     """Raised when the command runner asks the audit process to stop."""
 
 
+class AuditTimedOut(RuntimeError):
+    """Raised when the process-wide audit deadline expires."""
+
+
 def _handle_sigterm(_signum, _frame) -> None:
     raise AuditTerminated("the audit was stopped by the command runner (SIGTERM)")
+
+
+def _handle_overall_timeout(_signum, _frame) -> None:
+    raise AuditTimedOut("the audit exceeded its overall runtime deadline")
 
 
 def main() -> int:
@@ -215,6 +223,12 @@ def main() -> int:
     terminated = False
     current_stage = "starting"
     signal.signal(signal.SIGTERM, _handle_sigterm)
+    alarm_supported = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
+    previous_alarm_handler = None
+    if alarm_supported:
+        previous_alarm_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, _handle_overall_timeout)
+        signal.setitimer(signal.ITIMER_REAL, args.overall_timeout_seconds)
     try:
         run_lock = _acquire_run_lock(args.output_root, args.hotel)
         access = None
@@ -388,6 +402,32 @@ def main() -> int:
         result["last_stage"] = current_stage
         print(json.dumps(result, sort_keys=True), flush=True)
         return 143
+    except AuditTimedOut as exc:
+        if run_dir is not None:
+            try:
+                _atomic_json(
+                    run_dir / "run-status.json",
+                    {
+                        "status": "failed",
+                        "stage": "overall_timeout",
+                        "last_stage": current_stage,
+                        "property_code": args.hotel.upper(),
+                    },
+                )
+            except OSError:
+                pass
+        result = _failure(
+            str(exc),
+            run_dir,
+            error_code="overall_timeout",
+            next_question=(
+                "The audit reached its hard runtime limit. Should I preserve this run "
+                "and inspect its last recorded stage?"
+            ),
+        )
+        result["last_stage"] = current_stage
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 124
     except BrowserChallenge as exc:
         print(
             json.dumps(
@@ -415,6 +455,9 @@ def main() -> int:
         print(json.dumps(_failure(str(exc), run_dir), sort_keys=True))
         return 2
     finally:
+        if alarm_supported:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_alarm_handler)
         if session is not None:
             # Leave the shared acquisition tab at a deterministic starting page.
             # The final audit PDF is written to disk and is never opened here.

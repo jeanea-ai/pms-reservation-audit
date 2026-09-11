@@ -29,14 +29,17 @@ class PmsAccessTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_secrets(self, payload: dict):
+        path = self.root / ".secrets.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
     def test_current_pms_setup_contract_resolves(self):
         self._write_config(
             {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
         )
-        (self.root / ".secrets.json").write_text(
-            json.dumps({"CAF15": {"pms_password": "secret"}}),
-            encoding="utf-8",
-        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
         config_before = (self.root / "CAF15.json").read_bytes()
         secrets_before = (self.root / ".secrets.json").read_bytes()
         access = resolve_access("caf15", environ={}, config_dir=self.root)
@@ -104,10 +107,7 @@ class PmsAccessTests(unittest.TestCase):
                 "legacy_username": "KUser.caf15",
             }
         )
-        (self.root / ".secrets.json").write_text(
-            json.dumps({"CAF15": {"pms_password": "secret"}}),
-            encoding="utf-8",
-        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
         config_before = (self.root / "CAF15.json").read_bytes()
         secrets_before = (self.root / ".secrets.json").read_bytes()
         access = resolve_access("CAF15", environ={}, config_dir=self.root)
@@ -118,16 +118,13 @@ class PmsAccessTests(unittest.TestCase):
 
     def test_older_combined_secret_shape_remains_supported(self):
         self._write_config({"vendor": "choice_advantage"})
-        (self.root / ".secrets.json").write_text(
-            json.dumps(
-                {
-                    "CAF15": {
-                        "pms_username": "KUser.legacy",
-                        "pms_password": "secret",
-                    }
+        self._write_secrets(
+            {
+                "CAF15": {
+                    "pms_username": "KUser.legacy",
+                    "pms_password": "secret",
                 }
-            ),
-            encoding="utf-8",
+            }
         )
         access = resolve_access("CAF15", environ={}, config_dir=self.root)
         self.assertEqual("KUser.legacy", access["username"])
@@ -137,21 +134,56 @@ class PmsAccessTests(unittest.TestCase):
             {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"},
             status="ACCESS_PENDING",
         )
-        (self.root / ".secrets.json").write_text(
-            json.dumps({"CAF15": {"pms_password": "secret"}}),
-            encoding="utf-8",
-        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
         with self.assertRaisesRegex(AccessError, "finish PMS Setup"):
+            resolve_access("CAF15", environ={}, config_dir=self.root)
+
+    def test_missing_unknown_and_failed_statuses_are_refused(self):
+        for status in ("", "VERIFIED", "FAILED"):
+            with self.subTest(status=status):
+                self._write_config(
+                    {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"},
+                    status=status,
+                )
+                with self.assertRaisesRegex(AccessError, "explicitly verified"):
+                    resolve_access(
+                        "CAF15",
+                        environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+                        config_dir=self.root,
+                    )
+
+    def test_missing_vendor_is_refused(self):
+        self._write_config({"legacy_username": "KUser.caf15"})
+        with self.assertRaisesRegex(AccessError, "explicit pms.vendor"):
+            resolve_access(
+                "CAF15",
+                environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+                config_dir=self.root,
+            )
+
+    def test_production_secret_file_must_be_regular_owner_only_file(self):
+        self._write_config(
+            {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
+        )
+        path = self._write_secrets({"CAF15": {"pms_password": "secret"}})
+        path.chmod(0o644)
+        with self.assertRaisesRegex(AccessError, "chmod 600"):
+            resolve_access("CAF15", environ={}, config_dir=self.root)
+        path.unlink()
+        target = self.root / "actual-secrets.json"
+        target.write_text(
+            json.dumps({"CAF15": {"pms_password": "secret"}}), encoding="utf-8"
+        )
+        target.chmod(0o600)
+        path.symlink_to(target)
+        with self.assertRaisesRegex(AccessError, "symbolic link"):
             resolve_access("CAF15", environ={}, config_dir=self.root)
 
     def test_other_vendor_is_refused_without_touching_setup(self):
         self._write_config(
             {"vendor": "hotelkey", "username": "hotelkey-user"}
         )
-        (self.root / ".secrets.json").write_text(
-            json.dumps({"CAF15": {"pms_password": "secret"}}),
-            encoding="utf-8",
-        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
         with self.assertRaisesRegex(AccessError, "does not support"):
             resolve_access("CAF15", environ={}, config_dir=self.root)
 

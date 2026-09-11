@@ -7,16 +7,22 @@ import unittest
 from zoneinfo import ZoneInfo
 
 from scripts.pms_audit_run import (
+    AuditTimedOut,
     AuditTerminated,
     _acquire_run_lock,
     _failure,
     _handle_sigterm,
+    _handle_overall_timeout,
     _new_run_dir,
     _redacted_summary,
 )
 
 
 class PmsAuditRunTests(unittest.TestCase):
+    def test_overall_alarm_becomes_structured_timeout(self):
+        with self.assertRaisesRegex(AuditTimedOut, "overall runtime"):
+            _handle_overall_timeout(None, None)
+
     def test_sigterm_becomes_a_structured_audit_termination(self):
         with self.assertRaisesRegex(AuditTerminated, "SIGTERM"):
             _handle_sigterm(None, None)

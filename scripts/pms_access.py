@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,23}$")
+VERIFIED_PMS_SETUP_STATUSES = {"ACCESS_VERIFIED"}
+CHOICE_VENDORS = {
+    "choice_advantage",
+    "choiceadvantage",
+    "skytouch",
+    "skytouch / choice advantage",
+}
 
 
 class AccessError(RuntimeError):
@@ -35,6 +43,41 @@ def _read_json(path: Path, label: str) -> dict:
         raise AccessError(f"{label} is missing: {path}") from exc
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise AccessError(f"{label} is unreadable or invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise AccessError(f"{label} root must be an object")
+    return value
+
+
+def _read_protected_json(path: Path, label: str) -> dict:
+    """Read one owner-only regular file without following a symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    try:
+        if path.is_symlink():
+            raise AccessError(f"{label} must not be a symbolic link")
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+    except FileNotFoundError as exc:
+        raise AccessError(f"{label} is missing: {path}") from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise AccessError(f"{label} must not be a symbolic link") from exc
+        raise AccessError(f"{label} is inaccessible") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        os.close(descriptor)
+        raise AccessError(f"{label} must be a regular file")
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
+        os.close(descriptor)
+        raise AccessError(f"{label} must be owner-only (chmod 600)")
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = None
+            value = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AccessError(f"{label} is unreadable or invalid JSON") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if not isinstance(value, dict):
         raise AccessError(f"{label} root must be an object")
     return value
@@ -139,21 +182,18 @@ def resolve_access(
     configured_code = str(config.get("property_code") or normalized).strip().upper()
     if configured_code != normalized:
         raise AccessError("PMS Setup property config does not match --hotel")
-    status = str(config.get("status") or "")
-    if status in {"NEW", "ACCESS_PENDING"}:
+    status = str(config.get("status") or "").strip().upper()
+    if status not in VERIFIED_PMS_SETUP_STATUSES:
         raise AccessError(
-            f"{normalized} access is not verified; finish PMS Setup before auditing"
+            f"{normalized} access status is not explicitly verified; finish PMS Setup before auditing"
         )
     pms = config.get("pms")
     if not isinstance(pms, dict):
         raise AccessError("PMS Setup property config has no pms block")
-    vendor = str(pms.get("vendor") or "choice_advantage").strip().casefold()
-    if vendor not in {
-        "choice_advantage",
-        "choiceadvantage",
-        "skytouch",
-        "skytouch / choice advantage",
-    }:
+    vendor = str(pms.get("vendor") or "").strip().casefold()
+    if not vendor:
+        raise AccessError("PMS Setup property config has no explicit pms.vendor")
+    if vendor not in CHOICE_VENDORS:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
 
     environment_password = env.get(f"PMS_PASSWORD_{normalized}") or env.get(
@@ -162,7 +202,7 @@ def resolve_access(
     secrets_path = root / ".secrets.json"
     secrets = {}
     if not environment_password and secrets_path.exists():
-        secrets = _read_json(secrets_path, "PMS Setup secrets file")
+        secrets = _read_protected_json(secrets_path, "PMS Setup secrets file")
     scoped = secrets.get(normalized) or secrets.get(normalized.lower()) or {}
     if not isinstance(scoped, dict):
         scoped = {}

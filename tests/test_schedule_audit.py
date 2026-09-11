@@ -151,12 +151,17 @@ class ScheduleAuditTests(unittest.TestCase):
                 self._cron_args(tmp, "--announce-to", "kolo:chat-123", "--exact")
             )
             create_command = run.call_args_list[2].args[0]
+            runner = json.loads(
+                create_command[create_command.index("--command-argv") + 1]
+            )
         self.assertEqual(result["status"], "created")
         self.assertIn("--announce", create_command)
         self.assertIn("--exact", create_command)
         self.assertEqual(
             create_command[create_command.index("--to") + 1], "kolo:chat-123"
         )
+        self.assertTrue(runner[1].endswith("scripts/scheduled_audit_run.py"))
+        self.assertEqual(runner[runner.index("--delivery-to") + 1], "kolo:chat-123")
 
     def test_ambiguous_announcement_target_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

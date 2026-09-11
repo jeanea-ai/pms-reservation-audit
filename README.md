@@ -121,7 +121,10 @@ flags.
   holds a per-property lock and restores the shared browser to the reports menu.
 - `scripts/schedule_audit.py` — previews or creates a deterministic command cron
   using exact argv boundaries, explicit paths, bounded timeouts, and optional
-  explicit Kolo announcement routing.
+  explicit Kolo delivery routing.
+- `scripts/scheduled_audit_run.py` — runs the deterministic audit, validates the
+  resulting PDF, writes an aggregate-only receipt, logs completion, and queues
+  one light isolated agent session to attach the file to the requested Kolo chat.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
   procedure using the access contract created by PMS Setup.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
@@ -203,8 +206,12 @@ python3 scripts/schedule_audit.py \
 Remove `--dry-run` to create it. For elapsed-time scheduling, replace the cron
 and timezone arguments with an interval such as `--every 6h`. The job uses
 `--no-deliver` unless an exact destination is supplied with
-`--announce-to kolo:<chat-id>`. Announcements contain aggregate-only JSON and
-the final disk path; the generated audit PDF is not opened in the Kolo browser.
+`--announce-to kolo:<chat-id>`. With an explicit destination, a successful
+command queues a five-second, delete-after-run isolated delivery agent using
+qwen-3-7-plus, then glm-5-3-flash, then claude-haiku-4-5 if an earlier model is
+rejected while the job is created. The session uses light context and thinking
+off, sees only an aggregate receipt and the validated final path, and must attach
+the PDF without inspecting its contents or rerunning the audit.
 
 After this skill's acquisition procedure saves the fresh source reports:
 

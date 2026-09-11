@@ -49,8 +49,8 @@ targets. Refuse equally valid matches instead of selecting by tab order.
 2. Set `input[name="j_username"]` and `input[name="j_password"]` through
    the DOM and dispatch `input` and `change` events. Verify only field
    lengths.
-3. Select **Login**. A transient "try again" interstitial may be retried with
-   the same DOM-verified values at most twice.
+3. Select **Login** once. Stop on an unidentified transient interstitial rather
+   than guessing or resubmitting credentials.
 4. If offered **Migrate** or **Continue**, select **Continue**. Never migrate
    the account unless the operator explicitly authorizes that account change.
 5. For an explicitly authorized standalone test, the login command may select

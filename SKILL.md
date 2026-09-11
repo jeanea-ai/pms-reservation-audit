@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.9"
+version: "0.5.0"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.9"
+  version: "0.5.0"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -258,7 +258,9 @@ pipeline's structural verification.
 If PDF generation fails after its bounded retry, deliver the structured text
 result, say the PDF failed, and do not claim full delivery success.
 
-After delivery, log the result with `kolo log-action` without `--category`.
+After a scheduled report is generated, the deterministic delivery wrapper logs
+one aggregate-only `kolo log-action` event without `--category`. Logging failure
+does not rerun the audit or prevent the already-generated PDF from being queued.
 
 ## Command schedule
 
@@ -288,11 +290,18 @@ cron scheduling may use OpenClaw's bounded staggering. Use `--disabled` when the
 operator asks to inspect or test the job before enabling it.
 
 The default delivery is `--no-deliver`. Add `--announce-to kolo:<chat-id>` only
-when that exact destination is known and requested. Announcement output is the
-command's aggregate-only JSON, including the final report path; it does not open
-the generated PDF in the Kolo browser or expose row-level findings.
+when that exact destination is known and requested. With that option, the command
+job runs the audit and then queues one five-second, delete-after-run isolated
+delivery session with `--light-context` and thinking off. Its model preference is
+`litellm-fireworks/qwen-3-7-plus`, then
+`litellm-fireworks/glm-5-3-flash`, then `litellm/claude-haiku-4-5` when job
+creation rejects an earlier model. The delivery agent receives only an
+aggregate receipt and the validated final PDF path. It must attach that PDF,
+must not inspect its contents, and must never rerun the audit. The parent command
+prints `NO_REPLY` after successfully queuing delivery so it does not create a
+duplicate chat announcement.
 
-The scheduler uses exact argv boundaries, an explicit skill directory and
+The scheduler and delivery wrapper use exact argv boundaries, an explicit skill directory and
 output root, bounded execution/no-output timeouts, and one job name per property.
 It refuses to overwrite a same-name job. If it returns `status: exists`, ask its
 exact `next_question`; never delete or replace the existing schedule without the
