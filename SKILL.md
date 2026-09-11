@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.4"
+version: "0.4.5"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.4"
+  version: "0.4.5"
 ---
 
 # PMS Reconciliation
@@ -38,6 +38,15 @@ contract with `python3 scripts/readiness.py --test-access --hotel <CODE>`, then
 log in with:
 
 `python3 scripts/pms_login.py --hotel <CODE> --test-access --allow-skip-mfa`
+
+For an operator without terminal access, run `scripts/pms_access_setup.py` with
+an absolute output path outside the skill, then open only its emitted
+`127.0.0.1` URL in a new Kolo browser tab. The operator enters credentials
+directly. The agent must not inspect the form DOM, take screenshots, read field
+values, or open the resulting file. The one-use page binds only to loopback,
+expires after ten minutes, logs no requests, writes mode `0600`, refuses
+implicit replacement, and exits after saving. Pass only the non-secret path to
+`--test-access-file`.
 
 `--allow-skip-mfa` is authorized only for this explicit testing path. On every
 login it may select exactly one visible control whose label is **Skip MFA** while
@@ -74,6 +83,11 @@ The command itself uses no model calls.
    it never reads or returns their values. It reuses an active session first and
    stops if autofill or the exact official **Skip MFA** control is unavailable.
    Treat it as test-only, not as production credential storage.
+
+   If saved credentials appear only after clicking a field, do not retry,
+   inspect the password chooser, or simulate arrow-key selection. That chooser
+   is privileged browser UI and cannot be identity-checked through the page DOM.
+   Use the loopback setup page and `--test-access-file` instead.
 
    The command owns authentication, exact report selection, property-local date
    entry, original-response capture, the single fresh-key retry, searchable-PDF

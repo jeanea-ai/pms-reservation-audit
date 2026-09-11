@@ -144,6 +144,13 @@ presence without reading or returning either value, and stops if autofill or
 the exact official **Skip MFA** option is unavailable. This is not the
 production credential path.
 
+If saved credentials appear only after clicking the username field, browser
+autofill is not unattended. Do not blindly select the first password-manager
+suggestion. Operators without terminal access can instead use the one-use,
+loopback-only form in `scripts/pms_access_setup.py`. It writes an owner-only test
+access file outside the skill without exposing the values to chat; subsequent
+commands receive only its path through `--test-access-file`.
+
 The second command prints only a redacted JSON state. While ChoiceADVANTAGE
 offers the official option, it selects the exact **Skip MFA** control on each
 new login. If the option disappears, it returns `needs_mfa` instead of attempting

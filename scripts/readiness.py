@@ -82,6 +82,7 @@ def inspect(
         "scripts/audit_report.py",
         "scripts/one_shot_pdf.py",
         "scripts/pms_access.py",
+        "scripts/pms_access_setup.py",
         "scripts/pms_login.py",
         "scripts/pms_report_pull.py",
         "scripts/pms_audit_run.py",
