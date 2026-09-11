@@ -73,10 +73,11 @@ Live form contract verified against ChoiceADVANTAGE build 10.283.3 on
   are `arrivalDateFrom` and `arrivalDateTo`, booking fields are
   `bookingDateFrom` and `bookingDateTo`.
 
-`scripts/pms_report_pull.py` owns this contract. It temporarily changes the PDF
-form target from `_blank` to `_self` after arming CDP capture, keeping the
-single-use response on the already-attached page target. Agents must not repeat
-these DOM operations themselves.
+`scripts/pms_report_pull.py` owns this contract. It temporarily intercepts the
+validated native form submission and performs the same authenticated,
+same-origin request without navigating into Chrome's PDF viewer. It transfers
+the original response bytes in bounded chunks. Agents must not repeat these DOM
+operations themselves.
 
 ## Capture the one-shot source PDF
 
@@ -84,7 +85,8 @@ these DOM operations themselves.
 `ReportProxyServlet.proxy?ie=pdf` before selecting **Submit**. Capture the
 original network response body, not a rendered-page export.
 
-1. Select **Submit** exactly once.
+1. Select **Submit** exactly once while the supported executor intercepts that
+   form submission before browser navigation.
 2. Treat the key as consumed as soon as its response arrives, regardless of
    response status, length, or content type.
 3. Read the response body once. Do not probe, reload, issue a range or HEAD

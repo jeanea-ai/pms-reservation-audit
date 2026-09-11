@@ -85,8 +85,8 @@ naturally — for example:
   test mode can select only the exact official **Skip MFA** control when
   explicitly authorized.
 - `scripts/pms_report_pull.py` — selects the two exact reports, sets the required
-  arrival window, captures the original PDF response in the same browser target,
-  and permits only one fresh-parameter retry.
+  arrival window, captures the original authenticated response without entering
+  Chrome's PDF viewer, and permits only one fresh-parameter retry.
 - `scripts/pms_audit_run.py` — the single bounded entrypoint for login, both
   source pulls, parsing, reconciliation, analysis, and final PDF rendering.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture

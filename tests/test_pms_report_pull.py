@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from datetime import date
 import json
+import re
 import unittest
 from unittest.mock import patch
 
@@ -17,29 +18,32 @@ from scripts.pms_report_pull import (
 
 
 class FakeCaptureSession:
-    def __init__(self, events, bodies):
-        self.events = list(events)
-        self.bodies = bodies
-        self.calls = []
+    def __init__(self, pdf):
+        self.pdf = pdf
         self.expressions = []
-
-    def call(self, method, params=None):
-        self.calls.append((method, params or {}))
-        if method == "Network.getResponseBody":
-            return self.bodies[params["requestId"]]
-        return {}
-
-    def clear_events(self):
-        pass
+        self.polls = 0
 
     def evaluate(self, expression, **kwargs):
         self.expressions.append((expression, kwargs))
+        if "const submit = document.querySelector" in expression:
+            return {"started": True, "code": ""}
+        if "length: state.bytes" in expression:
+            self.polls += 1
+            return {
+                "status": "ready",
+                "length": len(self.pdf),
+                "contentType": "application/pdf",
+                "responseUrl": "https://www.choiceadvantage.com/choicehotels/ReportProxyServlet.proxy?ie=pdf",
+                "httpStatus": 200,
+                "errorCode": "",
+            }
+        if "return btoa(binary)" in expression:
+            match = re.search(r"subarray\((\d+), (\d+)\)", expression)
+            if not match:
+                return None
+            start, end = map(int, match.groups())
+            return base64.b64encode(self.pdf[start:end]).decode("ascii")
         return True
-
-    def next_event(self, timeout):
-        if not self.events:
-            raise ReportPullError("test event queue exhausted")
-        return self.events.pop(0)
 
 
 class FakeFormSession:
@@ -110,7 +114,7 @@ class PmsReportPullTests(unittest.TestCase):
         self.assertEqual(result["arrival_to"], "9/10/2027")
         self.assertIn('"bookingDateFrom": ""', session.expression)
         self.assertIn('"bookingDateTo": ""', session.expression)
-        self.assertIn("form.target = '_self'", session.expression)
+        self.assertNotIn("form.target = '_self'", session.expression)
 
     def test_guest_form_preserves_default_business_date(self):
         session = FakeFormSession({"business_date": "9/9/2026"})
@@ -118,43 +122,23 @@ class PmsReportPullTests(unittest.TestCase):
         self.assertEqual(result["business_date"], "9/9/2026")
         self.assertNotIn("dateField.value =", session.expression)
 
-    def test_capture_skips_html_wrapper_and_returns_first_pdf(self):
-        pdf = b"%PDF-1.7\nparser grade"
-        events = [
-            {
-                "method": "Network.responseReceived",
-                "params": {
-                    "requestId": "html",
-                    "response": {
-                        "url": "https://www.choiceadvantage.com/choicehotels/ReportProxyServlet.proxy?ie=pdf",
-                        "mimeType": "text/html",
-                    },
-                },
-            },
-            {"method": "Network.loadingFinished", "params": {"requestId": "html"}},
-            {
-                "method": "Network.responseReceived",
-                "params": {
-                    "requestId": "pdf",
-                    "response": {"url": "blob:https://www.choiceadvantage.com/id", "mimeType": "application/pdf"},
-                },
-            },
-            {"method": "Network.loadingFinished", "params": {"requestId": "pdf"}},
-        ]
-        session = FakeCaptureSession(
-            events,
-            {
-                "html": {"body": "<!doctype html>", "base64Encoded": False},
-                "pdf": {
-                    "body": base64.b64encode(pdf).decode("ascii"),
-                    "base64Encoded": True,
-                },
-            },
-        )
+    def test_capture_uses_authenticated_fetch_and_returns_original_pdf(self):
+        pdf = b"%PDF-1.7\n" + (b"parser grade\n" * 40000)
+        session = FakeCaptureSession(pdf)
         self.assertEqual(_capture_submit(session, 1), pdf)
-        self.assertEqual(
-            [method for method, _ in session.calls].count("Network.getResponseBody"), 2
+        self.assertTrue(
+            any(
+                "fetch(url.toString(), options)" in item[0]
+                for item in session.expressions
+            )
         )
+        self.assertTrue(
+            any("return btoa(binary)" in item[0] for item in session.expressions)
+        )
+        self.assertGreater(
+            sum("return btoa(binary)" in item[0] for item in session.expressions), 1
+        )
+        self.assertFalse(any("Network." in item[0] for item in session.expressions))
 
     def test_cdp_call_buffers_events_seen_before_response(self):
         session = CdpSession.__new__(CdpSession)

@@ -33,6 +33,7 @@ except ModuleNotFoundError:
 
 
 REPORT_PROXY_FRAGMENT = "/choicehotels/ReportProxyServlet.proxy"
+CAPTURE_CHUNK_BYTES = 192 * 1024
 
 
 class ReportPullError(RuntimeError):
@@ -145,7 +146,6 @@ def _prepare_form(session: CdpSession, spec: ReportSpec, local_day: date) -> dic
           const submit = document.querySelector('#doSubmit');
           if (!form || !dateField || !dateField.value.trim() || !submit) return null;
           if ((submit.textContent || '').trim().toLowerCase() !== 'submit') return null;
-          form.target = '_self';
           return {business_date: dateField.value.trim()};
         })()"""
     else:
@@ -175,7 +175,6 @@ def _prepare_form(session: CdpSession, spec: ReportSpec, local_day: date) -> dic
           }}
           const csv = form.querySelector('#CSVcheckbox');
           if (csv?.checked) csv.click();
-          form.target = '_self';
           return {{arrival_from: values.arrivalDateFrom, arrival_to: values.arrivalDateTo}};
         }})()"""
     result = session.evaluate(expression)
@@ -184,75 +183,143 @@ def _prepare_form(session: CdpSession, spec: ReportSpec, local_day: date) -> dic
     return result
 
 
-def _decode_body(result: dict) -> bytes:
-    body = result.get("body")
-    if not isinstance(body, str):
-        raise ReportPullError("browser returned an invalid report body")
-    if result.get("base64Encoded"):
-        try:
-            return base64.b64decode(body, validate=True)
-        except ValueError as exc:
-            raise ReportPullError("browser returned invalid base64 report data") from exc
-    return body.encode("latin-1")
-
-
 def _capture_submit(session: CdpSession, timeout: float) -> bytes:
-    session.call(
-        "Network.enable",
-        {
-            "maxTotalBufferSize": 100_000_000,
-            "maxResourceBufferSize": 100_000_000,
-        },
-    )
-    session.clear_events()
-    clicked = session.evaluate(
+    started = session.evaluate(
         """(() => {
-          if (window.__pmsAuditSubmitUsed) return false;
+          if (window.__pmsAuditCapture) return {started: false, code: 'already_used'};
           const submit = document.querySelector('#doSubmit');
           if (!submit || (submit.textContent || '').trim().toLowerCase() !== 'submit') {
-            return false;
+            return {started: false, code: 'submit_unavailable'};
           }
-          window.__pmsAuditSubmitUsed = true;
-          submit.click();
-          return true;
+          const state = window.__pmsAuditCapture = {
+            status: 'arming', bytes: null, contentType: '', responseUrl: '',
+            httpStatus: 0, errorCode: ''
+          };
+          const nativeSubmit = HTMLFormElement.prototype.submit;
+          let intercepted = false;
+          const capture = form => {
+            if (intercepted) return;
+            intercepted = true;
+            try {
+              const method = (form.method || 'GET').toUpperCase();
+              const params = new URLSearchParams(new FormData(form));
+              let url = new URL(form.action, location.href);
+              const options = {
+                method, credentials: 'include', redirect: 'follow',
+                headers: {'Accept': 'application/pdf'}
+              };
+              if (method === 'GET') {
+                for (const [key, value] of params) url.searchParams.append(key, value);
+              } else {
+                options.body = params;
+                options.headers['Content-Type'] =
+                  'application/x-www-form-urlencoded;charset=UTF-8';
+              }
+              state.status = 'fetching';
+              fetch(url.toString(), options).then(async response => {
+                state.httpStatus = response.status;
+                state.responseUrl = response.url;
+                state.contentType = response.headers.get('content-type') || '';
+                state.bytes = new Uint8Array(await response.arrayBuffer());
+                state.status = 'ready';
+              }).catch(() => {
+                state.errorCode = 'fetch_failed';
+                state.status = 'failed';
+              });
+            } catch (_) {
+              state.errorCode = 'form_serialization_failed';
+              state.status = 'failed';
+            }
+          };
+          const onSubmit = event => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            capture(event.target);
+          };
+          HTMLFormElement.prototype.submit = function() { capture(this); };
+          document.addEventListener('submit', onSubmit, true);
+          try {
+            submit.click();
+          } finally {
+            HTMLFormElement.prototype.submit = nativeSubmit;
+            document.removeEventListener('submit', onSubmit, true);
+          }
+          if (!intercepted) {
+            state.errorCode = 'submission_not_intercepted';
+            state.status = 'failed';
+          }
+          return {started: intercepted, code: state.errorCode};
         })()""",
         user_gesture=True,
     )
-    if not clicked:
-        raise ReportPullError("report Submit was unavailable or already used")
+    if not isinstance(started, dict) or not started.get("started"):
+        code = started.get("code") if isinstance(started, dict) else "capture_not_started"
+        raise ReportPullError(f"report capture did not start ({code})")
 
     deadline = time.monotonic() + timeout
-    candidates: dict[str, dict] = {}
-    non_pdf_received = False
+    state = None
     while time.monotonic() < deadline:
-        event = session.next_event(max(0.01, deadline - time.monotonic()))
-        method = event.get("method")
-        params = event.get("params") or {}
-        if method == "Network.responseReceived":
-            response = params.get("response") or {}
-            url = str(response.get("url") or "")
-            mime = str(response.get("mimeType") or "").casefold()
-            if REPORT_PROXY_FRAGMENT in url or mime == "application/pdf":
-                candidates[str(params.get("requestId"))] = response
-        elif method == "Network.loadingFinished":
-            request_id = str(params.get("requestId"))
-            if request_id not in candidates:
-                continue
-            try:
-                raw = _decode_body(
-                    session.call("Network.getResponseBody", {"requestId": request_id})
-                )
-            except (LoginError, ReportPullError):
-                continue
-            if raw.startswith(b"%PDF-"):
-                return raw
-            non_pdf_received = True
-        elif method == "Network.loadingFailed":
-            candidates.pop(str(params.get("requestId")), None)
+        state = session.evaluate(
+            """(() => {
+              const state = window.__pmsAuditCapture;
+              if (!state) return null;
+              return {
+                status: state.status,
+                length: state.bytes ? state.bytes.length : 0,
+                contentType: state.contentType,
+                responseUrl: state.responseUrl,
+                httpStatus: state.httpStatus,
+                errorCode: state.errorCode
+              };
+            })()"""
+        )
+        if isinstance(state, dict) and state.get("status") in {"ready", "failed"}:
+            break
+        time.sleep(0.2)
+    if not isinstance(state, dict) or state.get("status") not in {"ready", "failed"}:
+        raise ReportPullError("authenticated report request did not finish before timeout")
+    if state.get("status") == "failed":
+        raise ReportPullError(
+            f"authenticated report request failed ({state.get('errorCode') or 'unknown'})"
+        )
+    if int(state.get("httpStatus") or 0) != 200:
+        raise ReportPullError(
+            f"report endpoint returned HTTP {int(state.get('httpStatus') or 0)}"
+        )
+    response_url = str(state.get("responseUrl") or "")
+    if REPORT_PROXY_FRAGMENT not in response_url:
+        raise ReportPullError("report request was redirected away from the report endpoint")
+    length = int(state.get("length") or 0)
+    if length <= 0:
+        raise ReportPullError("report endpoint returned an empty response")
 
-    if non_pdf_received:
+    chunks = []
+    for offset in range(0, length, CAPTURE_CHUNK_BYTES):
+        encoded = session.evaluate(
+            f"""(() => {{
+              const bytes = window.__pmsAuditCapture?.bytes;
+              if (!bytes) return null;
+              const chunk = bytes.subarray({offset}, {min(offset + CAPTURE_CHUNK_BYTES, length)});
+              let binary = '';
+              for (let index = 0; index < chunk.length; index += 1) {{
+                binary += String.fromCharCode(chunk[index]);
+              }}
+              return btoa(binary);
+            }})()"""
+        )
+        if not isinstance(encoded, str):
+            raise ReportPullError("browser returned an invalid report chunk")
+        try:
+            chunks.append(base64.b64decode(encoded, validate=True))
+        except ValueError as exc:
+            raise ReportPullError("browser returned invalid base64 report data") from exc
+    session.evaluate("(() => { delete window.__pmsAuditCapture; return true; })()")
+    raw = b"".join(chunks)
+    if len(raw) != length:
+        raise ReportPullError("captured report length did not match browser response")
+    if not raw.startswith(b"%PDF-"):
         raise ReportPullError("report response was not an original PDF")
-    raise ReportPullError("no completed ChoiceADVANTAGE PDF response was captured")
+    return raw
 
 
 def pull_report(
