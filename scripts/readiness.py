@@ -163,7 +163,7 @@ def inspect(
                         "Okta Gmail gateway",
                         "gateway credential available (value not displayed)"
                         if has_gateway
-                        else "MATON_API_KEY is required for gv_sms OTP retrieval",
+                        else "MATON_API_KEY is required for Okta identity and SMS OTP retrieval",
                     )
                 )
         except AccessError as exc:

@@ -165,6 +165,7 @@ def _standalone_test_access(
     return {
         "property_code": normalized,
         "username": username.strip(),
+        "username_source": "standalone_test",
         "password": password,
         "timezone": _validated_timezone(payload.get("timezone")),
         "source": "standalone-test",
@@ -232,35 +233,53 @@ def resolve_access(
         legacy = {}
 
     okta_mfa = None
+    username_source = "pms_setup"
     if auth_mode == "okta_sso":
         okta_mfa = str(pms.get("okta_mfa") or "").strip().casefold()
-        if okta_mfa != "gv_sms":
-            raise AccessError("Okta access requires pms.okta_mfa set to gv_sms")
+        if okta_mfa not in {"gv_sms", "email"}:
+            raise AccessError(
+                "Okta access requires PMS Setup MFA metadata set to gv_sms or email"
+            )
         identity = config.get("identity")
-        if not isinstance(identity, dict):
-            raise AccessError("Okta access requires an identity block")
         pms_username = pms.get("username")
-        ops_email = identity.get("ops_email")
-        if not isinstance(pms_username, str) or not EMAIL_RE.fullmatch(
-            pms_username.strip()
-        ):
-            raise AccessError("Okta pms.username must be a valid operations email")
-        if not isinstance(ops_email, str) or not EMAIL_RE.fullmatch(ops_email.strip()):
-            raise AccessError("identity.ops_email must be a valid operations email")
-        if pms_username.strip().casefold() != ops_email.strip().casefold():
-            raise AccessError("Okta username does not match identity.ops_email")
-        if identity.get("ops_email_connected") is not True:
-            raise AccessError("Okta operations Gmail is not marked connected")
-        if not isinstance(identity.get("gv_number"), str) or not identity[
-            "gv_number"
-        ].strip():
-            raise AccessError("Okta access requires a dedicated Google Voice number")
-        if identity.get("gv_forwards_to_ops_email") is not True:
-            raise AccessError("Google Voice forwarding is not verified")
-        if not _verified_marker(identity.get("otp_path_verified")):
-            raise AccessError("Okta OTP delivery path is not verified")
-        username = pms_username.strip()
-        ops_email_value = ops_email.strip()
+        # PMS Setup 3.0.0 validates Choice with vendor + legacy_username and
+        # older shared records may not contain the richer documented identity
+        # block. Never rewrite that shared record. When the richer contract is
+        # present, validate it strictly; otherwise resolve the Okta identity
+        # from the platform-bound Gmail profile at login time.
+        has_rich_identity = identity is not None or pms_username is not None
+        if has_rich_identity:
+            if not isinstance(identity, dict):
+                raise AccessError("Okta pms.username requires an identity block")
+            ops_email = identity.get("ops_email")
+            if not isinstance(pms_username, str) or not EMAIL_RE.fullmatch(
+                pms_username.strip()
+            ):
+                raise AccessError("Okta pms.username must be a valid operations email")
+            if not isinstance(ops_email, str) or not EMAIL_RE.fullmatch(
+                ops_email.strip()
+            ):
+                raise AccessError("identity.ops_email must be a valid operations email")
+            if pms_username.strip().casefold() != ops_email.strip().casefold():
+                raise AccessError("Okta username does not match identity.ops_email")
+            if identity.get("ops_email_connected") is not True:
+                raise AccessError("Okta operations Gmail is not marked connected")
+            if not isinstance(identity.get("gv_number"), str) or not identity[
+                "gv_number"
+            ].strip():
+                raise AccessError(
+                    "Okta access requires a dedicated Google Voice number"
+                )
+            if identity.get("gv_forwards_to_ops_email") is not True:
+                raise AccessError("Google Voice forwarding is not verified")
+            if not _verified_marker(identity.get("otp_path_verified")):
+                raise AccessError("Okta OTP delivery path is not verified")
+            username = pms_username.strip()
+            ops_email_value = ops_email.strip()
+        else:
+            username = None
+            ops_email_value = None
+            username_source = "gmail_gateway_profile"
     else:
         username = (
             pms.get("legacy_username")
@@ -277,7 +296,9 @@ def resolve_access(
         or legacy.get("password")
         or legacy.get("j_password")
     )
-    if not isinstance(username, str) or not username.strip():
+    if auth_mode != "okta_sso" and (
+        not isinstance(username, str) or not username.strip()
+    ):
         raise AccessError(
             "Choice username is missing from pms.legacy_username and legacy fallbacks"
         )
@@ -294,7 +315,8 @@ def resolve_access(
 
     return {
         "property_code": normalized,
-        "username": username.strip(),
+        "username": username.strip() if isinstance(username, str) else None,
+        "username_source": username_source,
         "password": password,
         "timezone": timezone,
         "auth_mode": auth_mode,
@@ -337,7 +359,9 @@ def main() -> int:
                 "timezone": access["timezone"],
                 "auth_mode": access["auth_mode"],
                 "okta_mfa": access["okta_mfa"],
-                "username_present": True,
+                "username_present": bool(access["username"])
+                or access["username_source"] == "gmail_gateway_profile",
+                "username_source": access["username_source"],
                 "password_present": True,
                 "source": access["source"],
                 "test_only": access["test_only"],

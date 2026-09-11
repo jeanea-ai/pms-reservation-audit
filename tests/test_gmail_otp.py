@@ -96,6 +96,22 @@ class GmailOtpTests(unittest.TestCase):
             reader.wait_for_code(after_epoch=1_000_000_000, timeout_seconds=10)
         self.assertEqual(1, len(calls))
 
+    def test_connected_mailbox_can_supply_legacy_okta_identity_once(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return Response({"emailAddress": "Ops@Example.Test"})
+
+        reader = GmailOtpReader(
+            environ={"MATON_API_KEY": "secret"},
+            opener=opener,
+        )
+        deadline = 2_000_000_010.0
+        self.assertEqual("ops@example.test", reader.mailbox_email(deadline=deadline))
+        self.assertEqual("ops@example.test", reader.verify_mailbox(deadline=deadline))
+        self.assertEqual(1, len(calls))
+
     def test_stale_wrong_sender_and_ambiguous_messages_are_rejected(self):
         clock = FakeClock()
         replies = iter(

@@ -1,14 +1,16 @@
 # Controlled live Okta verification
 
 Use this only on a Choice property that PMS Setup has already verified for
-`pms.auth_mode: okta_sso` and `pms.okta_mfa: gv_sms`. Do not change a direct
+`pms.auth_mode: okta_sso`. Do not change a direct
 login property merely to exercise this branch.
 
 ## Preconditions
 
-PMS Setup owns all access state. Its property file must contain matching valid
-`pms.username` and `identity.ops_email`, a dedicated `identity.gv_number`, true
-Gmail/forwarding flags, and a true or ISO-date `identity.otp_path_verified`.
+PMS Setup owns all access state. Richer property records contain matching valid
+`pms.username` and `identity.ops_email` plus verified Google Voice fields.
+Deployed PMS Setup 3.0 Choice records may instead have `legacy_username`,
+`okta_mfa: email`, and no identity block; the audit resolves the Okta username
+from the connected Gmail profile and does not modify that record.
 The PMS password must resolve through `PMS_PASSWORD_<CODE>`, `PMS_PASSWORD`, or
 the owner-only property entry in `.secrets.json`. `MATON_API_KEY` must be
 injected into the same runtime. Never paste any of these values into chat or

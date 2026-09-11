@@ -82,7 +82,7 @@ class GmailOtpReader:
 
     def __init__(
         self,
-        ops_email: str,
+        ops_email: str | None = None,
         *,
         environ: dict[str, str] | None = None,
         opener=None,
@@ -93,7 +93,8 @@ class GmailOtpReader:
         api_key = env.get("MATON_API_KEY")
         if not api_key:
             raise OtpError("Gmail gateway credential is unavailable")
-        self._ops_email = ops_email.strip().casefold()
+        self._ops_email = ops_email.strip().casefold() if ops_email else None
+        self._mailbox_email: str | None = None
         self._api_key = api_key
         self._opener = opener or urllib.request.urlopen
         self._clock = clock
@@ -140,11 +141,21 @@ class GmailOtpReader:
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise OtpError("Gmail gateway returned invalid JSON") from exc
 
-    def verify_mailbox(self, *, deadline: float) -> None:
+    def mailbox_email(self, *, deadline: float) -> str:
+        if self._mailbox_email:
+            return self._mailbox_email
         profile = self._request("profile", query=None, deadline=deadline)
         mailbox = profile.get("emailAddress")
-        if not isinstance(mailbox, str) or mailbox.strip().casefold() != self._ops_email:
+        if not isinstance(mailbox, str) or not mailbox.strip():
+            raise OtpError("connected Gmail mailbox identity is unavailable")
+        self._mailbox_email = mailbox.strip().casefold()
+        return self._mailbox_email
+
+    def verify_mailbox(self, *, deadline: float) -> str:
+        mailbox = self.mailbox_email(deadline=deadline)
+        if self._ops_email and mailbox != self._ops_email:
             raise OtpError("connected Gmail mailbox does not match PMS Setup")
+        return mailbox
 
     def _fresh_candidates(self, *, after_epoch: float, deadline: float) -> list[tuple[int, str]]:
         listed = self._request(

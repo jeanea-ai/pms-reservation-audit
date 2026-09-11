@@ -199,6 +199,9 @@ class PmsOktaTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
+            def mailbox_email(self, **_kwargs):
+                return "ops@example.test"
+
             def wait_for_code(self, **kwargs):
                 self.calls.append(kwargs)
                 return "123456"
@@ -239,10 +242,10 @@ class PmsOktaTests(unittest.TestCase):
             return True
 
         access = {
-            "username": "ops@example.test",
+            "username": None,
             "password": "secret",
-            "ops_email": "ops@example.test",
-            "okta_mfa": "gv_sms",
+            "ops_email": None,
+            "okta_mfa": "email",
         }
         with patch("scripts.pms_okta._create_page_target", return_value={"webSocketDebuggerUrl": "ws://test"}), \
                 patch("scripts.pms_okta.CdpSession", WorkflowSession), \
@@ -252,7 +255,7 @@ class PmsOktaTests(unittest.TestCase):
                 patch("scripts.pms_okta._surface_snapshot", side_effect=surface_snapshot), \
                 patch("scripts.pms_okta._top_click_exact", side_effect=top_click), \
                 patch("scripts.pms_okta._click_exact", side_effect=click), \
-                patch("scripts.pms_okta._fill"), \
+                patch("scripts.pms_okta._fill") as fill, \
                 patch("scripts.pms_okta._wait_for_choice_destination", return_value=CONNECT_HOST), \
                 patch("scripts.pms_okta._snapshot", side_effect=lambda session: session.snapshot()), \
                 patch("scripts.pms_okta._list_page_targets", return_value=[]):
@@ -266,6 +269,12 @@ class PmsOktaTests(unittest.TestCase):
         self.assertEqual("authenticated", result["status"])
         self.assertEqual(1, session.sms_requests)
         self.assertEqual(1, len(reader.calls))
+        self.assertTrue(
+            any(
+                call.args[2] == "username" and call.args[3] == "ops@example.test"
+                for call in fill.call_args_list
+            )
+        )
         self.assertNotIn("123456", repr(result))
 
 

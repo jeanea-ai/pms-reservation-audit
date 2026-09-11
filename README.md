@@ -37,8 +37,11 @@ chat summary:
   from the existing PMS Setup property contract; password values resolve from
   the host's established environment/secrets path at run time.
 - **Two production authentication modes** — preserves the direct
-  `direct_login_no_mfa` flow and adds a config-gated `okta_sso` + `gv_sms`
-  flow. Okta supports top-level, same-process iframe, and OOPIF DOM surfaces;
+  `direct_login_no_mfa` flow and adds a config-gated `okta_sso` flow compatible
+  with both the richer identity contract and deployed PMS Setup 3.0 Choice
+  records. Missing richer identity fields are resolved from the bound Gmail
+  profile at runtime; shared setup files are never rewritten. Okta supports
+  top-level, same-process iframe, and OOPIF DOM surfaces;
   it requests one SMS and reads a fresh Google Voice-forwarded code through the
   property Gmail binding without storing or printing the OTP.
 - **Testable before full setup** — an explicitly gated standalone test mode can

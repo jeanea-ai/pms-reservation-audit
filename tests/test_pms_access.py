@@ -196,6 +196,33 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual("ops@example.test", access["username"])
         self.assertEqual("ops@example.test", access["ops_email"])
 
+    def test_pms_setup_3_okta_shape_resolves_identity_at_runtime_without_mutation(self):
+        # PMS Setup 3.0 validates this deployed Choice shape. The audit must
+        # consume it as-is instead of requiring or writing its richer docs shape.
+        self._write_config(
+            {
+                "vendor": "choice_advantage",
+                "auth_mode": "okta_sso",
+                "okta_mfa": "email",
+                "legacy_username": "KUser.ca307",
+            }
+        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
+        config_path = self.root / "CAF15.json"
+        secrets_path = self.root / ".secrets.json"
+        config_before = config_path.read_bytes()
+        secrets_before = secrets_path.read_bytes()
+
+        access = resolve_access("CAF15", environ={}, config_dir=self.root)
+
+        self.assertEqual("okta_sso", access["auth_mode"])
+        self.assertEqual("email", access["okta_mfa"])
+        self.assertIsNone(access["username"])
+        self.assertIsNone(access["ops_email"])
+        self.assertEqual("gmail_gateway_profile", access["username_source"])
+        self.assertEqual(config_before, config_path.read_bytes())
+        self.assertEqual(secrets_before, secrets_path.read_bytes())
+
     def test_okta_contract_rejects_unverified_or_mismatched_identity(self):
         base = {
             "property_code": "CAF15",

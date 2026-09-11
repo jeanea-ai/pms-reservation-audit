@@ -183,7 +183,7 @@ class ReadinessTests(unittest.TestCase):
                 missing = inspect(skill, {}, production_hotel="CA139")
             self.assertIn((
                 "FAIL", "Okta Gmail gateway",
-                "MATON_API_KEY is required for gv_sms OTP retrieval",
+                "MATON_API_KEY is required for Okta identity and SMS OTP retrieval",
             ), missing)
 
             with patch("scripts.readiness.resolve_access", return_value=access), \

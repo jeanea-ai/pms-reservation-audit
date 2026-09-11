@@ -273,15 +273,30 @@ def login_okta(
     otp_reader: GmailOtpReader | None = None,
 ) -> dict[str, object]:
     """Authenticate through Okta using one bounded SMS request and a fresh Gmail OTP."""
-    if access.get("okta_mfa") != "gv_sms":
-        raise OktaLoginError("Okta login requires verified gv_sms MFA configuration")
+    if access.get("okta_mfa") not in {"gv_sms", "email"}:
+        raise OktaLoginError("Okta login requires supported PMS Setup MFA metadata")
     username = str(access.get("username") or "")
     password = str(access.get("password") or "")
     ops_email = str(access.get("ops_email") or "")
-    if not username or not password or not ops_email:
+    if not password:
         raise OktaLoginError("Okta access is incomplete")
 
     deadline = time.monotonic() + timeout
+    reader = otp_reader or GmailOtpReader(ops_email or None)
+    if not username:
+        try:
+            username = reader.mailbox_email(deadline=deadline)
+        except OtpError as exc:
+            raise OktaLoginError(str(exc)) from exc
+        ops_email = username
+    elif not ops_email:
+        try:
+            mailbox = reader.verify_mailbox(deadline=deadline)
+        except OtpError as exc:
+            raise OktaLoginError(str(exc)) from exc
+        if mailbox.casefold() != username.casefold():
+            raise OktaLoginError("connected Gmail mailbox does not match Okta username")
+        ops_email = username
     target = _create_page_target(cdp_url, CONNECT_URL)
     session = CdpSession(
         target["webSocketDebuggerUrl"], interaction_delay=interaction_delay
@@ -363,7 +378,6 @@ def login_okta(
                 if snapshot.get("hasOtp"):
                     if not sms_requested:
                         raise OktaLoginError("Okta requested a code without this run sending SMS")
-                    reader = otp_reader or GmailOtpReader(ops_email)
                     remaining = min(90.0, max(1.0, deadline - time.monotonic()))
                     try:
                         code = reader.wait_for_code(
