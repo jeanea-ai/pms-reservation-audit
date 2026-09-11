@@ -36,6 +36,11 @@ chat summary:
 - **Credential-safe** — login identity, timezone, and password references come
   from the existing PMS Setup property contract; password values resolve from
   the host's established environment/secrets path at run time.
+- **Two production authentication modes** — preserves the direct
+  `direct_login_no_mfa` flow and adds a config-gated `okta_sso` + `gv_sms`
+  flow. Okta supports top-level, same-process iframe, and OOPIF DOM surfaces;
+  it requests one SMS and reads a fresh Google Voice-forwarded code through the
+  property Gmail binding without storing or printing the OTP.
 - **Testable before full setup** — an explicitly gated standalone test mode can
   use protected environment secrets or an owner-only JSON file without exposing
   credentials to the agent or accepting them on the command line.
@@ -113,6 +118,11 @@ flags.
   test mode can select only the exact official **Skip MFA** control when
   explicitly authorized. It deterministically targets the PMS tab, paces
   site-facing actions, and classifies known access challenges.
+- `scripts/pms_okta.py` — deterministic Choice Connect/Okta state machine with
+  exact-origin frame discovery, one-SMS semantics, identity checks, and the
+  final ChoiceADVANTAGE app launch.
+- `scripts/gmail_otp.py` — read-only Maton Gmail adapter that verifies the bound
+  mailbox and accepts only a fresh, sender-matched, unambiguous six-digit code.
 - `scripts/pms_report_pull.py` — selects the two exact reports, sets the required
   arrival window, captures the original authenticated response without entering
   Chrome's PDF viewer, and permits only one fresh-parameter retry.
@@ -127,6 +137,8 @@ flags.
   one light isolated agent session to attach the file to the requested Kolo chat.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
   procedure using the access contract created by PMS Setup.
+- `references/okta-live-test.md` — one-run, sanitized handoff protocol for the
+  developer with an Okta-enabled property.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
   validated spec, runs duplicate analysis, and atomically renders the PDF. It
   deliberately contains no login, browser, or ChoiceADVANTAGE automation.

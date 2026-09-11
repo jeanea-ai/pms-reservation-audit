@@ -17,6 +17,7 @@ class PmsAccessTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _write_config(self, pms: dict, status: str = "ACCESS_VERIFIED"):
+        pms = {"auth_mode": "direct_login_no_mfa", **pms}
         (self.root / "CAF15.json").write_text(
             json.dumps(
                 {
@@ -46,6 +47,7 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual("KUser.caf15", access["username"])
         self.assertEqual("secret", access["password"])
         self.assertEqual("America/Los_Angeles", access["timezone"])
+        self.assertEqual("direct_login_no_mfa", access["auth_mode"])
         self.assertEqual(config_before, (self.root / "CAF15.json").read_bytes())
         self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
 
@@ -160,6 +162,85 @@ class PmsAccessTests(unittest.TestCase):
                 environ={"PMS_PASSWORD_CAF15": "environment-secret"},
                 config_dir=self.root,
             )
+
+    def test_okta_contract_resolves_only_when_identity_is_verified(self):
+        pms = {
+            "vendor": "choice_advantage",
+            "auth_mode": "okta_sso",
+            "okta_mfa": "gv_sms",
+            "username": "ops@example.test",
+            "legacy_username": "KUser.caf15",
+        }
+        (self.root / "CAF15.json").write_text(
+            json.dumps(
+                {
+                    "property_code": "CAF15",
+                    "status": "ACCESS_VERIFIED",
+                    "timezone": "America/Los_Angeles",
+                    "identity": {
+                        "ops_email": "ops@example.test",
+                        "ops_email_connected": True,
+                        "gv_number": "+15555550100",
+                        "gv_forwards_to_ops_email": True,
+                        "otp_path_verified": "2026-09-01",
+                    },
+                    "pms": pms,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
+        access = resolve_access("CAF15", environ={}, config_dir=self.root)
+        self.assertEqual("okta_sso", access["auth_mode"])
+        self.assertEqual("gv_sms", access["okta_mfa"])
+        self.assertEqual("ops@example.test", access["username"])
+        self.assertEqual("ops@example.test", access["ops_email"])
+
+    def test_okta_contract_rejects_unverified_or_mismatched_identity(self):
+        base = {
+            "property_code": "CAF15",
+            "status": "ACCESS_VERIFIED",
+            "timezone": "America/Los_Angeles",
+            "identity": {
+                "ops_email": "ops@example.test",
+                "ops_email_connected": True,
+                "gv_number": "+15555550100",
+                "gv_forwards_to_ops_email": True,
+                "otp_path_verified": "2026-09-01",
+            },
+            "pms": {
+                "vendor": "choice_advantage",
+                "auth_mode": "okta_sso",
+                "okta_mfa": "gv_sms",
+                "username": "other@example.test",
+                "legacy_username": "KUser.caf15",
+            },
+        }
+        (self.root / "CAF15.json").write_text(json.dumps(base), encoding="utf-8")
+        with self.assertRaisesRegex(AccessError, "does not match"):
+            resolve_access(
+                "CAF15",
+                environ={"PMS_PASSWORD_CAF15": "secret"},
+                config_dir=self.root,
+            )
+        base["pms"]["username"] = "ops@example.test"
+        base["identity"]["otp_path_verified"] = None
+        (self.root / "CAF15.json").write_text(json.dumps(base), encoding="utf-8")
+        with self.assertRaisesRegex(AccessError, "OTP delivery path"):
+            resolve_access(
+                "CAF15",
+                environ={"PMS_PASSWORD_CAF15": "secret"},
+                config_dir=self.root,
+            )
+        for invalid in ("false", "2026-99-99"):
+            base["identity"]["otp_path_verified"] = invalid
+            (self.root / "CAF15.json").write_text(json.dumps(base), encoding="utf-8")
+            with self.assertRaisesRegex(AccessError, "OTP delivery path"):
+                resolve_access(
+                    "CAF15",
+                    environ={"PMS_PASSWORD_CAF15": "secret"},
+                    config_dir=self.root,
+                )
 
     def test_production_secret_file_must_be_regular_owner_only_file(self):
         self._write_config(

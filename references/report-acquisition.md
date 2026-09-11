@@ -9,7 +9,10 @@ report-pull skill is required.
 Read `kolo-hotels/config/<CODE>.json`, which is created and owned by
 `mf-hotel-pms-setup`. An audit must never edit that file.
 
+- Authentication mode: `pms.auth_mode`, either `direct_login_no_mfa` or
+  `okta_sso`.
 - Direct ChoiceADVANTAGE username: `pms.legacy_username`.
+- Okta username: matching `pms.username` and `identity.ops_email`.
 - Property timezone: top-level `timezone`.
 - Password: resolve `PMS_PASSWORD_<CODE>`, then `PMS_PASSWORD`, then
   `kolo-hotels/config/.secrets.json` at `<CODE>.pms_password`.
@@ -26,6 +29,13 @@ It reports only whether the established access fields resolve. Browser login
 code may import `resolve_access()` from that module; never print its returned
 username or password.
 
+For `okta_sso`, require `pms.okta_mfa: gv_sms`, a dedicated
+`identity.gv_number`, and explicit true/verified values for
+`identity.ops_email_connected`, `identity.gv_forwards_to_ops_email`, and
+`identity.otp_path_verified`. `MATON_API_KEY` must be present in the runtime
+environment for the platform-bound Gmail connection. The Gmail password is not
+read by this skill.
+
 ### Standalone test access
 
 If the operator explicitly requested testing before PMS Setup can be completed,
@@ -39,7 +49,7 @@ Chrome's saved login. It selects the same exact field names below and receives
 only one Boolean stating whether both fields are nonempty; it must never return,
 log, or inspect either value. This path is not the production credential store.
 
-## Login
+## Direct login
 
 Before navigation, choose the exact ChoiceADVANTAGE page target. Prefer the
 reports page over login, other ChoiceADVANTAGE pages, and stale report-proxy
@@ -78,6 +88,33 @@ blocks, known challenge URLs, and report HTTP 403/429 responses as
 `bot_challenge`. Stop immediately without consuming the normal report retry.
 The operator must complete any permitted verification manually in the
 persistent browser before one new bounded run.
+
+## Okta SSO with Google Voice SMS
+
+When and only when PMS Setup selects `okta_sso` + `gv_sms`, open a dedicated
+Choice Connect tab and select the exact **Connect Now** control. Discover one
+exact-origin `choicehotels.okta.com` DOM surface. It may be the top-level page,
+a same-process iframe (use an isolated execution context for its frame), or an
+out-of-process iframe (use its flattened attached CDP session). Refuse multiple
+surfaces, lookalike hosts, and coordinate/OCR fallbacks.
+
+Populate the username/password fields in memory and follow exact Okta controls.
+Select **Verify with your phone**, record the request time immediately before
+selecting **Receive a code via SMS**, and request no more than one SMS per run.
+Use `scripts/gmail_otp.py` to verify that the connected Gmail profile equals
+`identity.ops_email`, list only messages from `txt.voice.google.com` after that
+timestamp, and accept only one unambiguous six-digit code from the newest fresh
+message. Never save or print message bodies, credentials, or the OTP. A
+transient read may retry once, but an authentication error, mailbox mismatch,
+ambiguous code, or timeout fails closed without resending SMS.
+
+After verification, accept only Choice Connect or ChoiceADVANTAGE destinations.
+If an existing SSO session bypasses credential entry, require the displayed
+Choice Connect identity to match `identity.ops_email`. Select the exact
+**Choice Advantage** app control and verify the normal report menu before report
+acquisition. The live selector and post-auth route require one controlled test
+by the developer who has the Okta-enabled account; update selectors from
+sanitized DOM metadata only, never from credentials or message bodies.
 
 An on-demand audit has a four-minute overall deadline by default. Individual
 page/report waits are capped by both their own timeout and the remaining overall

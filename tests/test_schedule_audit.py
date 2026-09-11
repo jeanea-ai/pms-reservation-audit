@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.schedule_audit import create_schedule, parser
+from scripts.schedule_audit import _validate_production_access, create_schedule, parser
 
 
 HELP = " ".join(
@@ -30,6 +30,20 @@ def completed(command=None, returncode=0, stdout="", stderr=""):
 
 
 class ScheduleAuditTests(unittest.TestCase):
+    def test_okta_schedule_requires_gateway_environment(self):
+        access = {
+            "source": "mf-hotel-pms-setup",
+            "test_only": False,
+            "auth_mode": "okta_sso",
+        }
+        with patch("scripts.schedule_audit.resolve_access", return_value=access), \
+                patch.dict("scripts.schedule_audit.os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "MATON_API_KEY"):
+                _validate_production_access("CA139")
+        with patch("scripts.schedule_audit.resolve_access", return_value=access), \
+                patch.dict("scripts.schedule_audit.os.environ", {"MATON_API_KEY": "secret"}, clear=True):
+            self.assertIsNone(_validate_production_access("CA139"))
+
     def _cron_args(self, output_root, *extra):
         return parser().parse_args(
             [

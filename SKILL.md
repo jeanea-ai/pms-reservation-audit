@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.5.0"
+version: "0.6.0"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -34,9 +34,27 @@ It must report `source: mf-hotel-pms-setup`, `test_only: false`, and presence
 only for username/password. Production audits then use the normal command with
 no `--test-access`, `--test-access-file`, `--session-only`,
 `--browser-saved-login`, or `--allow-skip-mfa` flags. The deterministic resolver
-reads the property code, timezone, vendor and legacy username from PMS Setup,
-then resolves the password from its established protected environment or
-`.secrets.json` path without displaying any value.
+reads the property code, timezone, vendor, and explicit authentication mode
+from PMS Setup, then resolves the password from its established protected
+environment or `.secrets.json` path without displaying any value.
+
+Both Choice access modes are supported and selected only from PMS Setup:
+
+- `pms.auth_mode: direct_login_no_mfa` uses `pms.legacy_username` and the
+  established PMS password resolver.
+- `pms.auth_mode: okta_sso` requires `pms.okta_mfa: gv_sms`, matching valid
+  `pms.username` and `identity.ops_email`, a dedicated `identity.gv_number`,
+  and explicit verified Gmail/forwarding/OTP flags. It also requires the
+  platform-injected `MATON_API_KEY`. The browser opens Choice Connect, submits
+  Okta credentials, requests SMS exactly once, reads only a fresh Google Voice
+  forwarding message from the configured Gmail mailbox, enters the code, and
+  opens ChoiceADVANTAGE. The code is held only in memory and never printed or
+  stored.
+
+Okta DOM discovery supports a top-level page, a same-process iframe, or an
+out-of-process iframe through flattened CDP target attachment. Accept only the
+exact `choicehotels.okta.com` origin and exactly one matching surface. Never
+fall back to coordinates, screenshots, OCR, or an approximate/foreign origin.
 
 If PMS Setup exposes only a `pms.password_ref`, stop with the emitted credential
 provider error until the owning skill's resolver is integrated. Never interpret
@@ -144,9 +162,11 @@ records in chat, or begin open-ended browser experiments.
   read autofilled values, or ask the owner to paste them into chat or skill
   instructions.
 - On the Okta migration interstitial choose **Continue**, not **Migrate**.
-- Outside explicitly authorized standalone testing, never bypass MFA. During an
-  authorized test login, only the exact official **Skip MFA** control may be
-  selected; otherwise let the owner complete the challenge.
+- Outside explicitly authorized standalone direct-login testing, never bypass
+  MFA. Production `okta_sso` completes its configured `gv_sms` factor; it does
+  not select **Skip MFA**, remember-device controls, or resend a code. During an
+  authorized standalone direct-login test, only the exact official **Skip
+  MFA** control may be selected; otherwise let the owner complete the challenge.
 - Confirm the active property and required reports are accessible. Record any
   inaccessible report, page, record, or field as a limitation.
 - Do not claim completion after a session expires or a required page is missed.
@@ -162,6 +182,14 @@ page state. Do not replace a proven site control with coordinate clicking unless
 the DOM action first fails in a measured test.
 The authenticated source-PDF request remains an in-page same-origin fetch so it
 never opens Chrome's PDF viewer.
+
+For Okta, create a dedicated tab and allow only the exact Choice Connect, Okta,
+and ChoiceADVANTAGE hosts. An already-authenticated Choice Connect session may
+be reused only when its displayed identity matches the configured operations
+email. Refuse ambiguous frames, browser targets, identities, Gmail mailboxes,
+or OTP messages. A transient Gmail gateway read may retry once within the
+overall deadline; the browser must never request a second SMS code in the same
+run.
 
 Select the exact ChoiceADVANTAGE page target. Prefer the reports page over login,
 other PMS pages, or a stale report-proxy/PDF target. If two targets are equally

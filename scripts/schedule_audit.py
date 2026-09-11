@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -86,6 +87,8 @@ def _validate_production_access(hotel: str) -> None:
     access = resolve_access(hotel)
     if access.get("source") != "mf-hotel-pms-setup" or access.get("test_only") is not False:
         raise RuntimeError("scheduled audits require production access from mf-hotel-pms-setup")
+    if access.get("auth_mode") == "okta_sso" and not os.environ.get("MATON_API_KEY"):
+        raise RuntimeError("scheduled Okta audits require MATON_API_KEY in the job runtime")
 
 
 def build_create_command(

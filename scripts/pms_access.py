@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import errno
 import json
 import os
@@ -14,7 +15,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,23}$")
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 VERIFIED_PMS_SETUP_STATUSES = {"ACCESS_VERIFIED"}
+PMS_AUTH_MODES = {"direct_login_no_mfa", "okta_sso"}
 CHOICE_VENDORS = {
     "choice_advantage",
     "choiceadvantage",
@@ -94,6 +97,18 @@ def _validated_timezone(value: object) -> str:
     return timezone
 
 
+def _verified_marker(value: object) -> bool:
+    if value is True:
+        return True
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _standalone_test_access(
     normalized: str,
     env: dict[str, str],
@@ -171,7 +186,10 @@ def resolve_access(
     if not CODE_RE.fullmatch(normalized):
         raise AccessError("hotel code must be 2-24 letters, digits, dash, or underscore")
     if allow_test_access:
-        return _standalone_test_access(normalized, env, test_access_file)
+        access = _standalone_test_access(normalized, env, test_access_file)
+        access["auth_mode"] = "direct_login_no_mfa"
+        access["okta_mfa"] = None
+        return access
     root = config_dir or Path(
         env.get(
             "KOLO_HOTELS_CONFIG_DIR",
@@ -195,6 +213,9 @@ def resolve_access(
         raise AccessError("PMS Setup property config has no explicit pms.vendor")
     if vendor not in CHOICE_VENDORS:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
+    auth_mode = str(pms.get("auth_mode") or "").strip().casefold()
+    if auth_mode not in PMS_AUTH_MODES:
+        raise AccessError("PMS Setup pms.auth_mode is missing or unsupported")
 
     environment_password = env.get(f"PMS_PASSWORD_{normalized}") or env.get(
         "PMS_PASSWORD"
@@ -210,13 +231,45 @@ def resolve_access(
     if not isinstance(legacy, dict):
         legacy = {}
 
-    username = (
-        pms.get("legacy_username")
-        or scoped.get("pms_username")
-        or scoped.get("username")
-        or legacy.get("username")
-        or legacy.get("j_username")
-    )
+    okta_mfa = None
+    if auth_mode == "okta_sso":
+        okta_mfa = str(pms.get("okta_mfa") or "").strip().casefold()
+        if okta_mfa != "gv_sms":
+            raise AccessError("Okta access requires pms.okta_mfa set to gv_sms")
+        identity = config.get("identity")
+        if not isinstance(identity, dict):
+            raise AccessError("Okta access requires an identity block")
+        pms_username = pms.get("username")
+        ops_email = identity.get("ops_email")
+        if not isinstance(pms_username, str) or not EMAIL_RE.fullmatch(
+            pms_username.strip()
+        ):
+            raise AccessError("Okta pms.username must be a valid operations email")
+        if not isinstance(ops_email, str) or not EMAIL_RE.fullmatch(ops_email.strip()):
+            raise AccessError("identity.ops_email must be a valid operations email")
+        if pms_username.strip().casefold() != ops_email.strip().casefold():
+            raise AccessError("Okta username does not match identity.ops_email")
+        if identity.get("ops_email_connected") is not True:
+            raise AccessError("Okta operations Gmail is not marked connected")
+        if not isinstance(identity.get("gv_number"), str) or not identity[
+            "gv_number"
+        ].strip():
+            raise AccessError("Okta access requires a dedicated Google Voice number")
+        if identity.get("gv_forwards_to_ops_email") is not True:
+            raise AccessError("Google Voice forwarding is not verified")
+        if not _verified_marker(identity.get("otp_path_verified")):
+            raise AccessError("Okta OTP delivery path is not verified")
+        username = pms_username.strip()
+        ops_email_value = ops_email.strip()
+    else:
+        username = (
+            pms.get("legacy_username")
+            or scoped.get("pms_username")
+            or scoped.get("username")
+            or legacy.get("username")
+            or legacy.get("j_username")
+        )
+        ops_email_value = None
     password = (
         environment_password
         or scoped.get("pms_password")
@@ -244,6 +297,9 @@ def resolve_access(
         "username": username.strip(),
         "password": password,
         "timezone": timezone,
+        "auth_mode": auth_mode,
+        "okta_mfa": okta_mfa,
+        "ops_email": ops_email_value,
         "source": "mf-hotel-pms-setup",
         "test_only": False,
     }
@@ -279,6 +335,8 @@ def main() -> int:
             {
                 "property_code": access["property_code"],
                 "timezone": access["timezone"],
+                "auth_mode": access["auth_mode"],
+                "okta_mfa": access["okta_mfa"],
                 "username_present": True,
                 "password_present": True,
                 "source": access["source"],

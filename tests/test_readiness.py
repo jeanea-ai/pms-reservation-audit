@@ -133,6 +133,7 @@ class ReadinessTests(unittest.TestCase):
                         "timezone": "America/Los_Angeles",
                         "pms": {
                             "vendor": "choice_advantage",
+                            "auth_mode": "direct_login_no_mfa",
                             "legacy_username": "KUser.private",
                         },
                     }
@@ -162,6 +163,43 @@ class ReadinessTests(unittest.TestCase):
             rendered = repr(results)
             self.assertNotIn("KUser.private", rendered)
             self.assertNotIn("super-secret", rendered)
+
+    def test_okta_readiness_requires_gateway_credential_without_displaying_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+            access = {
+                "property_code": "CA139",
+                "source": "mf-hotel-pms-setup",
+                "auth_mode": "okta_sso",
+            }
+            common = [
+                patch("scripts.readiness.resolve_access", return_value=access),
+                patch("scripts.readiness.importlib.util.find_spec", return_value=True),
+                patch("scripts.readiness.find_chromium", return_value="chromium"),
+                patch("scripts.readiness.shutil.which", return_value=None),
+            ]
+            with common[0], common[1], common[2], common[3]:
+                missing = inspect(skill, {}, production_hotel="CA139")
+            self.assertIn((
+                "FAIL", "Okta Gmail gateway",
+                "MATON_API_KEY is required for gv_sms OTP retrieval",
+            ), missing)
+
+            with patch("scripts.readiness.resolve_access", return_value=access), \
+                    patch("scripts.readiness.importlib.util.find_spec", return_value=True), \
+                    patch("scripts.readiness.find_chromium", return_value="chromium"), \
+                    patch("scripts.readiness.shutil.which", return_value=None):
+                present = inspect(
+                    skill,
+                    {"MATON_API_KEY": "gateway-secret"},
+                    production_hotel="CA139",
+                )
+            self.assertIn((
+                "PASS", "Okta Gmail gateway",
+                "gateway credential available (value not displayed)",
+            ), present)
+            self.assertNotIn("gateway-secret", repr(present))
 
 
 if __name__ == "__main__":

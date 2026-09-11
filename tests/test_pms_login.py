@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from scripts.pms_login import (
     BrowserChallenge,
@@ -13,6 +14,7 @@ from scripts.pms_login import (
     _raise_if_browser_challenge,
     _select_page_target,
     _snapshot_signature,
+    login,
 )
 
 
@@ -123,6 +125,19 @@ class PmsLoginTests(unittest.TestCase):
         self.assertIn("value.length", rendered)
         self.assertNotIn("return username.value", rendered)
         self.assertNotIn("return password.value", rendered)
+
+    def test_okta_mode_dispatches_without_entering_direct_login(self):
+        access = {
+            "auth_mode": "okta_sso",
+            "okta_mfa": "gv_sms",
+            "username": "ops@example.test",
+            "ops_email": "ops@example.test",
+            "password": "secret",
+        }
+        with patch("scripts.pms_okta.login_okta", return_value={"status": "authenticated"}) as okta:
+            result = login(access, cdp_url="http://browser.invalid")
+        self.assertEqual("authenticated", result["status"])
+        okta.assert_called_once()
 
 
 if __name__ == "__main__":

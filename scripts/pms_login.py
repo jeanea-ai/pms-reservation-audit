@@ -56,23 +56,56 @@ class CdpSession:
         )
         self._next_id = 0
         self._events: list[dict] = []
+        self._attached_targets: dict[str, dict] = {}
         self.interaction_delay = interaction_delay
 
     def close(self) -> None:
         self._ws.close()
 
-    def call(self, method: str, params: dict | None = None) -> dict:
+    def _record_event(self, message: dict) -> None:
+        if message.get("method") == "Target.attachedToTarget":
+            params = message.get("params") or {}
+            info = params.get("targetInfo") or {}
+            target_id = str(info.get("targetId") or "")
+            session_id = str(params.get("sessionId") or "")
+            if target_id and session_id:
+                self._attached_targets[target_id] = {
+                    "session_id": session_id,
+                    "target_info": info,
+                }
+        elif message.get("method") == "Target.detachedFromTarget":
+            session_id = str((message.get("params") or {}).get("sessionId") or "")
+            self._attached_targets = {
+                key: value
+                for key, value in self._attached_targets.items()
+                if value.get("session_id") != session_id
+            }
+        elif message.get("method") == "Target.targetInfoChanged":
+            info = (message.get("params") or {}).get("targetInfo") or {}
+            target_id = str(info.get("targetId") or "")
+            if target_id in self._attached_targets:
+                self._attached_targets[target_id]["target_info"] = info
+        self._events.append(message)
+
+    def call(
+        self,
+        method: str,
+        params: dict | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> dict:
         self._ws.settimeout(10)
         self._next_id += 1
         call_id = self._next_id
-        self._ws.send(
-            json.dumps({"id": call_id, "method": method, "params": params or {}})
-        )
+        payload = {"id": call_id, "method": method, "params": params or {}}
+        if session_id:
+            payload["sessionId"] = session_id
+        self._ws.send(json.dumps(payload))
         while True:
             message = json.loads(self._ws.recv())
             if message.get("id") != call_id:
                 if message.get("method"):
-                    self._events.append(message)
+                    self._record_event(message)
                 continue
             if "error" in message:
                 raise LoginError(f"browser command failed: {message['error'].get('message', 'unknown error')}")
@@ -94,30 +127,45 @@ class CdpSession:
             except Exception as exc:
                 raise LoginError("browser event wait timed out") from exc
             if message.get("method"):
-                return message
+                self._record_event(message)
+                return self._events.pop()
 
-    def evaluate(self, expression: str, *, user_gesture: bool = False):
+    def evaluate(
+        self,
+        expression: str,
+        *,
+        user_gesture: bool = False,
+        context_id: int | None = None,
+        session_id: str | None = None,
+    ):
+        params = {
+            "expression": expression,
+            "returnByValue": True,
+            "awaitPromise": True,
+            "userGesture": user_gesture,
+        }
+        if context_id is not None:
+            params["contextId"] = context_id
         result = self.call(
             "Runtime.evaluate",
-            {
-                "expression": expression,
-                "returnByValue": True,
-                "awaitPromise": True,
-                "userGesture": user_gesture,
-            },
+            params,
+            session_id=session_id,
         )
         remote = result.get("result", {})
         if remote.get("subtype") == "error":
             raise LoginError("browser evaluation failed")
         return remote.get("value")
 
-    def navigate(self, url: str) -> None:
+    def navigate(self, url: str, *, session_id: str | None = None) -> None:
         self.pace()
-        self.call("Page.navigate", {"url": url})
+        self.call("Page.navigate", {"url": url}, session_id=session_id)
 
     def pace(self) -> None:
         """Apply a small deterministic gap between site-facing interactions."""
         time.sleep(self.interaction_delay)
+
+    def attached_targets(self) -> list[dict]:
+        return list(self._attached_targets.values())
 
 def _select_page_target(pages: list[dict]) -> dict:
     def priority(target: dict) -> int:
@@ -149,38 +197,42 @@ def _select_page_target(pages: list[dict]) -> dict:
     return matches[0]
 
 
-def _page_websocket(cdp_url: str) -> str:
+def _list_page_targets(cdp_url: str) -> list[dict]:
     try:
         with urllib.request.urlopen(f"{cdp_url.rstrip('/')}/json", timeout=5) as response:
             targets = json.loads(response.read())
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise LoginError("the persistent browser CDP endpoint is unavailable") from exc
-    pages = [
+    return [
         target
         for target in targets
         if target.get("type") == "page" and target.get("webSocketDebuggerUrl")
     ]
+
+
+def _create_page_target(cdp_url: str, url: str) -> dict:
+    request = urllib.request.Request(
+        f"{cdp_url.rstrip('/')}/json/new?{urllib.parse.quote(url, safe='')}",
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            target = json.loads(response.read())
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise LoginError("the persistent browser could not create a dedicated page") from exc
+    websocket_url = target.get("webSocketDebuggerUrl")
+    if not isinstance(websocket_url, str) or not websocket_url:
+        raise LoginError("the persistent browser created a page without a CDP websocket")
+    return target
+
+
+def _page_websocket(cdp_url: str) -> str:
+    pages = _list_page_targets(cdp_url)
     try:
         return _select_page_target(pages)["webSocketDebuggerUrl"]
     except NoChoiceTarget:
         # Create a dedicated page instead of replacing an unrelated user tab.
-        request = urllib.request.Request(
-            f"{cdp_url.rstrip('/')}/json/new?{urllib.parse.quote(SIGN_IN_URL, safe='')}",
-            method="PUT",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=5) as response:
-                target = json.loads(response.read())
-        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-            raise LoginError(
-                "the persistent browser could not create a dedicated ChoiceADVANTAGE page"
-            ) from exc
-        websocket_url = target.get("webSocketDebuggerUrl")
-        if not isinstance(websocket_url, str) or not websocket_url:
-            raise LoginError(
-                "the persistent browser created a page without a CDP websocket"
-            )
-        return websocket_url
+        return _create_page_target(cdp_url, SIGN_IN_URL)["webSocketDebuggerUrl"]
 
 
 def _snapshot(session: CdpSession) -> dict:
@@ -473,6 +525,21 @@ def login(
     allow_skip_mfa: bool = False,
     interaction_delay: float = DEFAULT_INTERACTION_DELAY,
 ) -> dict[str, object]:
+    auth_mode = str(access.get("auth_mode") or "direct_login_no_mfa")
+    if auth_mode == "okta_sso":
+        if allow_skip_mfa:
+            raise LoginError("Skip MFA is not supported for production Okta access")
+        try:
+            from scripts.pms_okta import login_okta
+        except ModuleNotFoundError:
+            from pms_okta import login_okta
+        return login_okta(
+            access,
+            cdp_url=cdp_url,
+            interaction_delay=interaction_delay,
+        )
+    if auth_mode != "direct_login_no_mfa":
+        raise LoginError("unsupported PMS authentication mode")
     session = CdpSession(
         _page_websocket(cdp_url), interaction_delay=interaction_delay
     )

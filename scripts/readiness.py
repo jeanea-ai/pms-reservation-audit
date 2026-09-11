@@ -85,10 +85,13 @@ def inspect(
         "scripts/pms_access.py",
         "scripts/pms_access_setup.py",
         "scripts/pms_login.py",
+        "scripts/pms_okta.py",
+        "scripts/gmail_otp.py",
         "scripts/pms_report_pull.py",
         "scripts/pms_audit_run.py",
         "scripts/schedule_audit.py",
         "references/report-acquisition.md",
+        "references/okta-live-test.md",
         "assets/caf15_audit_report.pdf",
     ):
         path = skill_dir / relative
@@ -152,6 +155,17 @@ def inspect(
                     ),
                 )
             )
+            if production_access.get("auth_mode") == "okta_sso":
+                has_gateway = bool(env.get("MATON_API_KEY"))
+                results.append(
+                    _result(
+                        "PASS" if has_gateway else "FAIL",
+                        "Okta Gmail gateway",
+                        "gateway credential available (value not displayed)"
+                        if has_gateway
+                        else "MATON_API_KEY is required for gv_sms OTP retrieval",
+                    )
+                )
         except AccessError as exc:
             results.append(_result("FAIL", "PMS Setup access", str(exc)))
     else:
