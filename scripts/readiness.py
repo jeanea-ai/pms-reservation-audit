@@ -87,6 +87,7 @@ def inspect(
         "scripts/pms_login.py",
         "scripts/pms_report_pull.py",
         "scripts/pms_audit_run.py",
+        "scripts/schedule_audit.py",
         "references/report-acquisition.md",
         "assets/caf15_audit_report.pdf",
     ):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import fcntl
 import json
 from pathlib import Path
 import tempfile
@@ -13,11 +14,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 try:
     from scripts.audit_pipeline import build_report_spec
     from scripts.audit_report import render_pdf_atomic
-    from scripts.pms_access import AccessError, resolve_access
+    from scripts.pms_access import AccessError, CODE_RE, resolve_access
     from scripts.pms_login import (
         CdpSession,
         DEFAULT_CDP_URL,
         LoginError,
+        REPORTS_URL,
         _page_websocket,
         login,
         login_with_browser_saved_access,
@@ -27,11 +29,12 @@ try:
 except ModuleNotFoundError:
     from audit_pipeline import build_report_spec
     from audit_report import render_pdf_atomic
-    from pms_access import AccessError, resolve_access
+    from pms_access import AccessError, CODE_RE, resolve_access
     from pms_login import (
         CdpSession,
         DEFAULT_CDP_URL,
         LoginError,
+        REPORTS_URL,
         _page_websocket,
         login,
         login_with_browser_saved_access,
@@ -61,6 +64,24 @@ def _new_run_dir(root: Path, now: datetime) -> Path:
         candidate = root / f"{stem}-{suffix}"
     candidate.mkdir()
     return candidate
+
+
+def _acquire_run_lock(root: Path, hotel: str):
+    """Hold one stable lock per property across manual and scheduled runs."""
+    root.mkdir(parents=True, exist_ok=True)
+    normalized = hotel.strip().upper()
+    if not CODE_RE.fullmatch(normalized):
+        raise ValueError("hotel code must be 2-24 letters, digits, dash, or underscore")
+    lock_path = root / f".pms-audit-{normalized}.lock"
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise RuntimeError(
+            f"another {normalized} audit is already using this output root"
+        ) from None
+    return handle
 
 
 def _failure(
@@ -161,7 +182,9 @@ def main() -> int:
 
     run_dir = None
     session = None
+    run_lock = None
     try:
+        run_lock = _acquire_run_lock(args.output_root, args.hotel)
         access = None
         timezone_name = args.timezone
         if args.browser_saved_login:
@@ -276,7 +299,18 @@ def main() -> int:
         return 2
     finally:
         if session is not None:
-            session.close()
+            # Leave the shared acquisition tab at a deterministic starting page.
+            # The final audit PDF is written to disk and is never opened here.
+            try:
+                session.navigate(REPORTS_URL)
+            except Exception:
+                pass
+            try:
+                session.close()
+            except Exception:
+                pass
+        if run_lock is not None:
+            run_lock.close()
 
 
 if __name__ == "__main__":

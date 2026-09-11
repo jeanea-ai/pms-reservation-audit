@@ -22,6 +22,11 @@ chat summary:
    negative balances in red, and a read-only disclosure). Generated
    deterministically via `scripts/audit_report.py`.
 
+4. **Command scheduling** — creates an explicit OpenClaw command cron at a
+   local-clock cron pattern or fixed interval. Scheduled runs use no model call,
+   consume production access from PMS Setup, and never overlap another audit for
+   the same property and output root.
+
 ## Key properties
 
 - **Read-only** — never edits, cancels, merges, creates, or modifies any
@@ -103,7 +108,11 @@ flags.
   arrival window, captures the original authenticated response without entering
   Chrome's PDF viewer, and permits only one fresh-parameter retry.
 - `scripts/pms_audit_run.py` — the single bounded entrypoint for login, both
-  source pulls, parsing, reconciliation, analysis, and final PDF rendering.
+  source pulls, parsing, reconciliation, analysis, and final PDF rendering. It
+  holds a per-property lock and restores the shared browser to the reports menu.
+- `scripts/schedule_audit.py` — previews or creates a deterministic command cron
+  using exact argv boundaries, explicit paths, bounded timeouts, and optional
+  explicit Kolo announcement routing.
 - `references/report-acquisition.md` — ChoiceADVANTAGE login and report capture
   procedure using the access contract created by PMS Setup.
 - `scripts/audit_pipeline.py` — one post-extraction command that builds the
@@ -150,14 +159,11 @@ If the operator already authenticated manually in the persistent browser, use
 `--session-only --timezone America/Los_Angeles` for that one test. Session-only
 runs are never suitable for cron.
 
-For temporary cron testing when the operator has explicitly accepted Chrome's
-saved credentials, add `--browser-saved-login`,
-`--timezone America/Los_Angeles`, and `--allow-skip-mfa`. This mode first reuses
-an active session; after logout it
-clicks Login only when Chrome has already autofilled both fields. It checks
-presence without reading or returning either value, and stops if autofill or
-the exact official **Skip MFA** option is unavailable. This is not the
-production credential path.
+Browser-saved access is available only for an explicitly authorized one-time
+test. Add `--browser-saved-login`, `--timezone America/Los_Angeles`, and
+`--allow-skip-mfa`. This mode first reuses an active session; after logout it
+clicks Login only when Chrome has already autofilled both fields. Never put this
+mode on a schedule.
 
 If saved credentials appear only after clicking the username field, browser
 autofill is not unattended. Do not blindly select the first password-manager
@@ -171,6 +177,25 @@ offers the official option, it selects the exact **Skip MFA** control on each
 new login. If the option disappears, it returns `needs_mfa` instead of attempting
 another bypass. Standalone test access remains read-only and must not be used by
 a schedule or email-delivery path.
+
+### Schedule production audits
+
+Preview an exact local-clock schedule without changing cron state:
+
+```bash
+python3 scripts/schedule_audit.py \
+  --hotel CAF15 \
+  --cron "15 9 * * *" \
+  --timezone America/Los_Angeles \
+  --output-root ~/.openclaw/workspace-main/pms-audits \
+  --dry-run
+```
+
+Remove `--dry-run` to create it. For elapsed-time scheduling, replace the cron
+and timezone arguments with an interval such as `--every 6h`. The job uses
+`--no-deliver` unless an exact destination is supplied with
+`--announce-to kolo:<chat-id>`. Announcements contain aggregate-only JSON and
+the final disk path; the generated audit PDF is not opened in the Kolo browser.
 
 After this skill's acquisition procedure saves the fresh source reports:
 

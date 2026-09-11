@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from zoneinfo import ZoneInfo
 
-from scripts.pms_audit_run import _failure, _new_run_dir, _redacted_summary
+from scripts.pms_audit_run import (
+    _acquire_run_lock,
+    _failure,
+    _new_run_dir,
+    _redacted_summary,
+)
 
 
 class PmsAuditRunTests(unittest.TestCase):
@@ -18,6 +23,17 @@ class PmsAuditRunTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertTrue(first.is_dir())
             self.assertTrue(second.is_dir())
+
+    def test_same_property_and_output_root_cannot_overlap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = _acquire_run_lock(Path(tmp), "caf15")
+            try:
+                with self.assertRaisesRegex(RuntimeError, "already using"):
+                    _acquire_run_lock(Path(tmp), "CAF15")
+            finally:
+                first.close()
+            second = _acquire_run_lock(Path(tmp), "CAF15")
+            second.close()
 
     def test_failure_has_one_actionable_question(self):
         payload = _failure(

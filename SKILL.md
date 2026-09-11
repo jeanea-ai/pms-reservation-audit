@@ -1,22 +1,23 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.6"
+version: "0.4.7"
 description: >
-  Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
+  Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
+  (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
   double bookings. Trigger on natural requests such as "audit my guest
   ledger", "who owes us money?", "check no-shows and cancellations", or "find
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.6"
+  version: "0.4.7"
 requires: [mf-hotel-pms-setup]
 ---
 
 # PMS Reconciliation
 
-Run this on demand unless the operator explicitly requests a temporary test
-schedule. It is strictly read-only: never edit, cancel, merge, create, or
+Run this on demand unless the operator explicitly requests a schedule. It is
+strictly read-only: never edit, cancel, merge, create, or
 otherwise modify any PMS record. Every audit must use fresh reports; never reuse
 report data from an earlier run.
 
@@ -77,8 +78,8 @@ ChoiceADVANTAGE offers that official option. It must not match approximate label
 bypass another challenge, migrate the account, or store an OTP/MFA token. If the
 exact control is absent, stop with `needs_mfa` and let the operator complete MFA.
 All access and report data are still real and read-only; describe resulting
-artifacts as test output and never email them. Schedule only an explicitly
-requested, bounded command-cron test.
+artifacts as test output and never email them. Never put standalone test access
+on a schedule.
 
 ## Normal execution path
 
@@ -224,3 +225,46 @@ If PDF generation fails after its bounded retry, deliver the structured text
 result, say the PDF failed, and do not claim full delivery success.
 
 After delivery, log the result with `kolo log-action` without `--category`.
+
+## Command schedule
+
+Create a schedule only when the operator explicitly asks. Scheduled audits are
+deterministic OpenClaw command jobs: they start no model turn, use production
+access from `mf-hotel-pms-setup`, pull fresh source reports, and run the same
+`pms_audit_run.py` entrypoint as an on-demand audit. Never schedule
+`--session-only`, browser-saved access, standalone test credentials, MFA bypass,
+or a hand-built shell command.
+
+Translate the requested frequency into exactly one form:
+
+- A local clock time or calendar pattern uses `--cron` plus the property's IANA
+  timezone. Ask one short question only if the intended time, day, or timezone
+  is genuinely ambiguous.
+- A fixed elapsed interval uses `--every`, such as `30m`, `6h`, or `1d`. An
+  interval is not a promise to run at the same local wall-clock time after DST.
+
+Preview without changing cron state, then use the identical command without
+`--dry-run`:
+
+`python3 scripts/schedule_audit.py --hotel <CODE> --cron "15 9 * * *" --timezone America/Los_Angeles --output-root <persistent-directory> --dry-run`
+
+For an interval, replace `--cron ... --timezone ...` with `--every <interval>`.
+Use `--exact` only when the operator requires an exact top-of-hour time; normal
+cron scheduling may use OpenClaw's bounded staggering. Use `--disabled` when the
+operator asks to inspect or test the job before enabling it.
+
+The default delivery is `--no-deliver`. Add `--announce-to kolo:<chat-id>` only
+when that exact destination is known and requested. Announcement output is the
+command's aggregate-only JSON, including the final report path; it does not open
+the generated PDF in the Kolo browser or expose row-level findings.
+
+The scheduler uses exact argv boundaries, an explicit skill directory and
+output root, bounded execution/no-output timeouts, and one job name per property.
+It refuses to overwrite a same-name job. If it returns `status: exists`, ask its
+exact `next_question`; never delete or replace the existing schedule without the
+operator's answer. Inspect created jobs with `openclaw cron list --json --all`.
+
+Manual and scheduled runs share a per-property lock in the output root. If a run
+is already active, the second command fails safely instead of overlapping the
+shared ChoiceADVANTAGE browser. Every run returns the browser to the reports menu
+after acquisition; the final audit PDF is always written directly to disk.
