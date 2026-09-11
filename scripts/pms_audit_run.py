@@ -82,6 +82,47 @@ def _failure(
     return payload
 
 
+def _redacted_summary(payload: dict, analysis: dict | None) -> dict:
+    """Return aggregate-only findings that are safe to repeat outside the PDF."""
+    summary: dict[str, int | float] = {}
+    ledger = payload.get("guest_ledger")
+    if isinstance(ledger, dict):
+        balances = ledger.get("balances")
+        groups = ledger.get("groups")
+        if isinstance(balances, list):
+            summary["ledger_balance_accounts"] = len(balances)
+            summary["ledger_balance_total"] = round(
+                sum(
+                    float(item.get("balance"))
+                    for item in balances
+                    if isinstance(item, dict)
+                    and isinstance(item.get("balance"), (int, float))
+                ),
+                2,
+            )
+        if isinstance(groups, list):
+            summary["group_accounts"] = len(groups)
+            summary["group_balance_total"] = round(
+                sum(
+                    float(item.get("balance"))
+                    for item in groups
+                    if isinstance(item, dict)
+                    and isinstance(item.get("balance"), (int, float))
+                ),
+                2,
+            )
+    if isinstance(analysis, dict):
+        counts = analysis.get("counts")
+        if isinstance(counts, dict):
+            summary["future_reservations_input"] = int(counts.get("input") or 0)
+            summary["future_reservations_unique"] = int(counts.get("unique") or 0)
+        window = (analysis.get("windows") or {}).get("future_12_months")
+        if isinstance(window, dict):
+            summary["duplicate_groups"] = int(window.get("groups_found") or 0)
+            summary["duplicate_rooms"] = int(window.get("rooms_total") or 0)
+    return summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hotel", required=True)
@@ -193,6 +234,7 @@ def main() -> int:
             "report": str(report_path),
             "sources": acquisition,
             "source_failures": failures,
+            "summary": _redacted_summary(payload, analysis),
             "next_question": payload.get("next_question"),
         }
         if analysis:

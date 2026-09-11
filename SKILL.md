@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.2"
+version: "0.4.3"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,7 +9,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.2"
+  version: "0.4.3"
 ---
 
 # PMS Reconciliation
@@ -71,7 +71,14 @@ The command itself uses no model calls.
    verification, source parsing, subtotal/count reconciliation, duplicate
    analysis, test labeling, and atomic rendering. It produces redacted JSON and
    never prints report contents or credentials.
-3. Deliver the generated PDF with a short findings summary. The command owns
+3. Deliver the generated PDF with only the aggregate values in the command's
+   redacted `summary` object. Do not open the source PDFs, audit-input JSON, or
+   final PDF to compose the chat response. Never reproduce a guest or group
+   name, account/confirmation/folio number, stay date, email address, or
+   row-level balance in chat. Detailed findings belong only in the attached
+   owner-facing PDF. A complete successful run needs no follow-up question.
+   Never offer to investigate, merge, cancel, or edit individual PMS records.
+   The command owns
    date windows, cancellation filtering, identity deduplication, match/category
    decisions, totals, spec validation, structural PDF verification, retry, and
    atomic publication. Do not redo those stages in chat.
