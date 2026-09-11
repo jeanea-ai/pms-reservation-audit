@@ -48,6 +48,17 @@ class PmsAuditRunTests(unittest.TestCase):
         self.assertEqual(payload["next_question"].count("?"), 1)
         self.assertNotIn("traceback", payload["next_question"].casefold())
 
+    def test_bot_challenge_failure_has_stable_code_and_manual_question(self):
+        payload = _failure(
+            "access verification",
+            error_code="bot_challenge",
+            next_question=(
+                "Please complete access verification in the persistent browser, then retry?"
+            ),
+        )
+        self.assertEqual(payload["error_code"], "bot_challenge")
+        self.assertEqual(payload["next_question"].count("?"), 1)
+
     def test_redacted_summary_contains_aggregates_but_no_source_rows(self):
         payload = {
             "guest_ledger": {

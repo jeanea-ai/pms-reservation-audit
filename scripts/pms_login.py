@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 try:
     from scripts.pms_access import AccessError, resolve_access
@@ -21,14 +22,26 @@ DEFAULT_CDP_URL = "http://127.0.0.1:18800"
 SIGN_IN_URL = "https://www.choiceadvantage.com/choicehotels/sign_in.jsp"
 REPORTS_URL = "https://www.choiceadvantage.com/choicehotels/ReportViewStart.init"
 SKIP_MFA_LABEL = "Skip MFA"
+DEFAULT_INTERACTION_DELAY = 0.75
 
 
 class LoginError(RuntimeError):
     """Raised when deterministic browser login cannot safely continue."""
 
 
+class BrowserChallenge(LoginError):
+    """Raised when the site presents an access-control or human-verification challenge."""
+
+
 class CdpSession:
-    def __init__(self, websocket_url: str):
+    def __init__(
+        self,
+        websocket_url: str,
+        *,
+        interaction_delay: float = DEFAULT_INTERACTION_DELAY,
+    ):
+        if not 0.25 <= interaction_delay <= 3:
+            raise ValueError("interaction delay must be between 0.25 and 3 seconds")
         try:
             import websocket
         except ImportError as exc:
@@ -38,6 +51,7 @@ class CdpSession:
         )
         self._next_id = 0
         self._events: list[dict] = []
+        self.interaction_delay = interaction_delay
 
     def close(self) -> None:
         self._ws.close()
@@ -93,7 +107,53 @@ class CdpSession:
         return remote.get("value")
 
     def navigate(self, url: str) -> None:
+        self.pace()
         self.call("Page.navigate", {"url": url})
+
+    def pace(self) -> None:
+        """Apply a small deterministic gap between site-facing interactions."""
+        time.sleep(self.interaction_delay)
+
+    def trusted_click(self, x: float, y: float) -> None:
+        """Dispatch one browser-trusted click at previously verified coordinates."""
+        self.pace()
+        common = {"x": x, "y": y, "button": "left", "clickCount": 1}
+        self.call("Input.dispatchMouseEvent", {"type": "mousePressed", **common})
+        self.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **common})
+
+
+def _select_page_target(pages: list[dict]) -> dict:
+    def priority(target: dict) -> int:
+        raw_url = str(target.get("url") or "")
+        parsed = urlparse(raw_url)
+        host = (parsed.hostname or "").casefold()
+        if host != "choiceadvantage.com" and not host.endswith(".choiceadvantage.com"):
+            return 0
+        path = parsed.path.casefold()
+        if "reportviewstart.init" in path:
+            return 5
+        if "sign_in.jsp" in path or "login.do" in path:
+            return 4
+        if "reportproxyservlet.proxy" in path:
+            return 1
+        return 3
+
+    if not pages:
+        raise LoginError("the persistent browser has no page target")
+    best_priority = max(priority(target) for target in pages)
+    if best_priority > 0:
+        matches = [target for target in pages if priority(target) == best_priority]
+    elif len(pages) == 1:
+        matches = pages
+    else:
+        raise LoginError(
+            "the persistent browser has multiple pages and no exact ChoiceADVANTAGE target"
+        )
+    if len(matches) != 1:
+        raise LoginError(
+            "the persistent browser has multiple equally valid ChoiceADVANTAGE targets"
+        )
+    return matches[0]
 
 
 def _page_websocket(cdp_url: str) -> str:
@@ -107,12 +167,7 @@ def _page_websocket(cdp_url: str) -> str:
         for target in targets
         if target.get("type") == "page" and target.get("webSocketDebuggerUrl")
     ]
-    for target in pages:
-        if "choiceadvantage.com" in str(target.get("url") or "").casefold():
-            return target["webSocketDebuggerUrl"]
-    if pages:
-        return pages[0]["webSocketDebuggerUrl"]
-    raise LoginError("the persistent browser has no page target")
+    return _select_page_target(pages)["webSocketDebuggerUrl"]
 
 
 def _snapshot(session: CdpSession) -> dict:
@@ -124,6 +179,10 @@ def _snapshot(session: CdpSession) -> dict:
           ready: document.readyState,
           hasLogin: !!document.querySelector('input[name="j_username"]') &&
                     !!document.querySelector('input[name="j_password"]'),
+          hasBrowserChallenge: !!document.querySelector(
+            'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], .g-recaptcha, '
+            + '.h-captcha, [data-sitekey], #cf-challenge-running, #challenge-form'
+          ),
           hasReportMenu: [...document.querySelectorAll('a')].some(a =>
             ['Guest Ledger', 'Future Reservations', 'Future Reservation Report']
               .includes((a.textContent || '').trim()))
@@ -140,6 +199,33 @@ def _snapshot_signature(snapshot: dict) -> tuple:
     )
 
 
+def _looks_like_browser_challenge(snapshot: dict) -> bool:
+    if snapshot.get("hasBrowserChallenge"):
+        return True
+    url = str(snapshot.get("url") or "").casefold()
+    text = f"{snapshot.get('title', '')}\n{snapshot.get('body', '')}".casefold()
+    url_markers = ("/captcha", "/challenge", "/cdn-cgi/")
+    text_markers = (
+        "verify you are human",
+        "unusual traffic",
+        "automated queries",
+        "checking your browser",
+        "complete the captcha",
+        "access denied",
+        "temporarily blocked",
+    )
+    return any(marker in url for marker in url_markers) or any(
+        marker in text for marker in text_markers
+    )
+
+
+def _raise_if_browser_challenge(snapshot: dict) -> None:
+    if _looks_like_browser_challenge(snapshot):
+        raise BrowserChallenge(
+            "ChoiceADVANTAGE presented an access-verification challenge"
+        )
+
+
 def _wait_for_settle(
     session: CdpSession,
     timeout: float = 15.0,
@@ -152,6 +238,7 @@ def _wait_for_settle(
     stable = 0
     while time.monotonic() < deadline:
         current = _snapshot(session)
+        _raise_if_browser_challenge(current)
         signature = _snapshot_signature(current)
         stable = stable + 1 if signature == previous else 0
         changed = original is None or signature != original
@@ -172,20 +259,29 @@ def _has_exact_control(session: CdpSession, label: str) -> bool:
     )
 
 
+def _trusted_click_point(session: CdpSession, expression: str, failure: str) -> None:
+    point = session.evaluate(expression)
+    if not isinstance(point, dict) or not isinstance(point.get("x"), (int, float)) or not isinstance(
+        point.get("y"), (int, float)
+    ):
+        raise LoginError(failure)
+    session.trusted_click(float(point["x"]), float(point["y"]))
+
+
 def _click_exact_control(session: CdpSession, label: str) -> None:
     encoded = json.dumps(label.casefold())
-    clicked = session.evaluate(
+    _trusted_click_point(
+        session,
         f"""(() => {{
           const node = [...document.querySelectorAll('a,button,input[type=button],input[type=submit]')]
             .find(item => ((item.textContent || item.value || '').trim().toLowerCase() === {encoded}));
-          if (!node) return false;
-          node.click();
-          return true;
+          if (!node) return null;
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return {{x: rect.x + rect.width / 2, y: rect.y + rect.height / 2}};
         }})()""",
-        user_gesture=True,
+        f"expected {label!r} control is unavailable",
     )
-    if not clicked:
-        raise LoginError(f"expected {label!r} control is unavailable")
 
 
 def _has_traditional_login_continue(session: CdpSession) -> bool:
@@ -199,19 +295,35 @@ def _has_traditional_login_continue(session: CdpSession) -> bool:
 
 
 def _click_traditional_login_continue(session: CdpSession) -> None:
-    clicked = session.evaluate(
+    _trusted_click_point(
+        session,
         """(() => {
           const node = [...document.querySelectorAll('a')].find(item =>
             (item.textContent || '').trim() === 'Continue' &&
             /formSubmit/.test(item.getAttribute('onclick') || ''));
-          if (!node) return false;
-          node.click();
-          return true;
+          if (!node) return null;
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
         })()""",
-        user_gesture=True,
+        "traditional-login Continue control is unavailable",
     )
-    if not clicked:
-        raise LoginError("traditional-login Continue control is unavailable")
+
+
+def _click_login_control(session: CdpSession) -> None:
+    _trusted_click_point(
+        session,
+        """(() => {
+          const node = [...document.querySelectorAll('button,input[type=submit],a')]
+            .find(item => /^(login|sign in)$/i.test(
+              (item.textContent || item.value || '').trim()));
+          if (!node) return null;
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
+        })()""",
+        "ChoiceADVANTAGE login control was not found",
+    )
 
 
 def _is_authenticated(snapshot: dict) -> bool:
@@ -300,9 +412,12 @@ def login_with_browser_saved_access(
     cdp_url: str = DEFAULT_CDP_URL,
     allow_skip_mfa: bool = False,
     autofill_timeout: float = 15.0,
+    interaction_delay: float = DEFAULT_INTERACTION_DELAY,
 ) -> dict[str, object]:
     """Login by clicking already-autofilled browser fields without reading them."""
-    session = CdpSession(_page_websocket(cdp_url))
+    session = CdpSession(
+        _page_websocket(cdp_url), interaction_delay=interaction_delay
+    )
     try:
         session.call("Page.enable")
         session.navigate(REPORTS_URL)
@@ -330,22 +445,7 @@ def login_with_browser_saved_access(
             raise LoginError(
                 "saved browser credentials did not autofill the ChoiceADVANTAGE login"
             )
-        submitted = session.evaluate(
-            """(() => {
-              const username = document.querySelector('input[name="j_username"]');
-              const password = document.querySelector('input[name="j_password"]');
-              if (!username?.value || !password?.value) return false;
-              const submit = [...document.querySelectorAll('button,input[type=submit],a')]
-                .find(node => /^(login|sign in)$/i.test(
-                  (node.textContent || node.value || '').trim()));
-              if (!submit) return false;
-              submit.click();
-              return true;
-            })()""",
-            user_gesture=True,
-        )
-        if not submitted:
-            raise LoginError("ChoiceADVANTAGE login control was not found")
+        _click_login_control(session)
         snapshot = _wait_for_settle(session, changed_from=snapshot)
         result = _finish_login(
             session,
@@ -363,8 +463,11 @@ def login(
     *,
     cdp_url: str = DEFAULT_CDP_URL,
     allow_skip_mfa: bool = False,
+    interaction_delay: float = DEFAULT_INTERACTION_DELAY,
 ) -> dict[str, object]:
-    session = CdpSession(_page_websocket(cdp_url))
+    session = CdpSession(
+        _page_websocket(cdp_url), interaction_delay=interaction_delay
+    )
     try:
         session.call("Page.enable")
         session.navigate(REPORTS_URL)
@@ -379,7 +482,7 @@ def login(
         values = json.dumps(
             {"username": access["username"], "password": access["password"]}
         )
-        submitted = session.evaluate(
+        filled = session.evaluate(
             f"""(() => {{
               const values = {values};
               const username = document.querySelector('input[name="j_username"]');
@@ -390,16 +493,12 @@ def login(
                 node.dispatchEvent(new Event('input', {{bubbles: true}}));
                 node.dispatchEvent(new Event('change', {{bubbles: true}}));
               }}
-              const submit = [...document.querySelectorAll('button,input[type=submit],a')]
-                .find(node => /^(login|sign in)$/i.test((node.textContent || node.value || '').trim()));
-              if (!submit) return false;
-              submit.click();
               return true;
             }})()""",
-            user_gesture=True,
         )
-        if not submitted:
-            raise LoginError("ChoiceADVANTAGE login control was not found")
+        if not filled:
+            raise LoginError("ChoiceADVANTAGE login fields could not be populated")
+        _click_login_control(session)
         snapshot = _wait_for_settle(session, changed_from=snapshot)
 
         return _finish_login(
@@ -424,11 +523,19 @@ def main() -> int:
     parser.add_argument(
         "--cdp-url", default=os.environ.get("PMS_RECON_CDP_URL", DEFAULT_CDP_URL)
     )
+    parser.add_argument(
+        "--interaction-delay-seconds",
+        type=float,
+        default=DEFAULT_INTERACTION_DELAY,
+        help="bounded delay between site-facing browser interactions",
+    )
     args = parser.parse_args()
     if args.test_access_file and not args.test_access:
         parser.error("--test-access-file requires --test-access")
     if args.allow_skip_mfa and not args.test_access:
         parser.error("--allow-skip-mfa is available only with --test-access")
+    if not 0.25 <= args.interaction_delay_seconds <= 3:
+        parser.error("--interaction-delay-seconds must be between 0.25 and 3")
     try:
         access = resolve_access(
             args.hotel,
@@ -439,7 +546,24 @@ def main() -> int:
             access,
             cdp_url=args.cdp_url,
             allow_skip_mfa=args.allow_skip_mfa,
+            interaction_delay=args.interaction_delay_seconds,
         )
+    except BrowserChallenge as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error_code": "bot_challenge",
+                    "error": str(exc),
+                    "next_question": (
+                        "Please complete the access verification in the persistent "
+                        "browser. Is it ready for one new bounded login?"
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        return 3
     except (AccessError, LoginError, OSError, ValueError) as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}, sort_keys=True))
         return 2

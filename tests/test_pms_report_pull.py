@@ -7,10 +7,9 @@ import re
 import unittest
 from unittest.mock import patch
 
-from scripts.pms_login import CdpSession, _page_websocket
+from scripts.pms_login import BrowserChallenge, CdpSession, _page_websocket
 from scripts.pms_report_pull import (
     REPORTS,
-    ReportPullError,
     _capture_submit,
     _prepare_form,
     same_date_next_year,
@@ -18,8 +17,9 @@ from scripts.pms_report_pull import (
 
 
 class FakeCaptureSession:
-    def __init__(self, pdf):
+    def __init__(self, pdf, status=200):
         self.pdf = pdf
+        self.status = status
         self.expressions = []
         self.polls = 0
 
@@ -34,7 +34,7 @@ class FakeCaptureSession:
                 "length": len(self.pdf),
                 "contentType": "application/pdf",
                 "responseUrl": "https://www.choiceadvantage.com/choicehotels/ReportProxyServlet.proxy?ie=pdf",
-                "httpStatus": 200,
+                "httpStatus": self.status,
                 "errorCode": "",
             }
         if "return btoa(binary)" in expression:
@@ -139,6 +139,11 @@ class PmsReportPullTests(unittest.TestCase):
             sum("return btoa(binary)" in item[0] for item in session.expressions), 1
         )
         self.assertFalse(any("Network." in item[0] for item in session.expressions))
+
+    def test_capture_classifies_access_control_status_without_retrying(self):
+        session = FakeCaptureSession(b"denied", status=429)
+        with self.assertRaisesRegex(BrowserChallenge, "HTTP 429"):
+            _capture_submit(session, 1)
 
     def test_cdp_call_buffers_events_seen_before_response(self):
         session = CdpSession.__new__(CdpSession)

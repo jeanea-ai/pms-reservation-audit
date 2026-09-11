@@ -15,20 +15,28 @@ import uuid
 try:
     from scripts.one_shot_pdf import CaptureError, preserve_response
     from scripts.pms_login import (
+        BrowserChallenge,
         CdpSession,
         DEFAULT_CDP_URL,
+        DEFAULT_INTERACTION_DELAY,
         LoginError,
         REPORTS_URL,
         _page_websocket,
+        _raise_if_browser_challenge,
+        _snapshot,
     )
 except ModuleNotFoundError:
     from one_shot_pdf import CaptureError, preserve_response
     from pms_login import (
+        BrowserChallenge,
         CdpSession,
         DEFAULT_CDP_URL,
+        DEFAULT_INTERACTION_DELAY,
         LoginError,
         REPORTS_URL,
         _page_websocket,
+        _raise_if_browser_challenge,
+        _snapshot,
     )
 
 
@@ -94,6 +102,7 @@ def _wait_for_value(
         value = session.evaluate(expression)
         if value:
             return value
+        _raise_if_browser_challenge(_snapshot(session))
         time.sleep(0.2)
     raise ReportPullError(failure)
 
@@ -115,17 +124,20 @@ def _open_report_form(session: CdpSession, spec: ReportSpec, timeout: float) -> 
     )
     if menu_state == "login":
         raise AuthenticationRequired("the persistent browser is not authenticated")
-    clicked = session.evaluate(
+    point = session.evaluate(
         f"""(() => {{
           const node = document.getElementById({encoded_id});
-          if (!node || (node.textContent || '').trim() !== {encoded_label}) return false;
-          node.click();
-          return true;
+          if (!node || (node.textContent || '').trim() !== {encoded_label}) return null;
+          const rect = node.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return null;
+          return {{x: rect.x + rect.width / 2, y: rect.y + rect.height / 2}};
         }})()""",
-        user_gesture=True,
     )
-    if not clicked:
+    if not isinstance(point, dict) or not isinstance(point.get("x"), (int, float)) or not isinstance(
+        point.get("y"), (int, float)
+    ):
         raise ReportPullError(f"could not open {spec.menu_label}")
+    session.trusted_click(float(point["x"]), float(point["y"]))
     encoded_form = json.dumps(spec.form_name)
     _wait_for_value(
         session,
@@ -282,9 +294,14 @@ def _capture_submit(session: CdpSession, timeout: float) -> bytes:
         raise ReportPullError(
             f"authenticated report request failed ({state.get('errorCode') or 'unknown'})"
         )
-    if int(state.get("httpStatus") or 0) != 200:
+    http_status = int(state.get("httpStatus") or 0)
+    if http_status in {403, 429}:
+        raise BrowserChallenge(
+            f"ChoiceADVANTAGE returned an access-control response (HTTP {http_status})"
+        )
+    if http_status != 200:
         raise ReportPullError(
-            f"report endpoint returned HTTP {int(state.get('httpStatus') or 0)}"
+            f"report endpoint returned HTTP {http_status}"
         )
     response_url = str(state.get("responseUrl") or "")
     if REPORT_PROXY_FRAGMENT not in response_url:
@@ -339,6 +356,7 @@ def pull_report(
         try:
             _open_report_form(session, spec, timeout)
             parameters = _prepare_form(session, spec, local_day)
+            session.pace()
             response = _capture_submit(session, timeout)
             record = preserve_response(
                 response,
@@ -358,6 +376,8 @@ def pull_report(
             }
         except AuthenticationRequired:
             raise
+        except BrowserChallenge:
+            raise
         except (CaptureError, LoginError, ReportPullError) as exc:
             failures.append(str(exc))
     raise ReportPullError(
@@ -372,9 +392,16 @@ def main() -> int:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
+    parser.add_argument(
+        "--interaction-delay-seconds",
+        type=float,
+        default=DEFAULT_INTERACTION_DELAY,
+    )
     args = parser.parse_args()
     if not 1 <= args.timeout_seconds <= 120:
         parser.error("--timeout-seconds must be between 1 and 120")
+    if not 0.25 <= args.interaction_delay_seconds <= 3:
+        parser.error("--interaction-delay-seconds must be between 0.25 and 3")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     state_file = args.output_dir / "capture-state.json"
@@ -382,7 +409,10 @@ def main() -> int:
     results = []
     session = None
     try:
-        session = CdpSession(_page_websocket(args.cdp_url))
+        session = CdpSession(
+            _page_websocket(args.cdp_url),
+            interaction_delay=args.interaction_delay_seconds,
+        )
         session.call("Page.enable")
         for key in keys:
             spec = REPORTS[key]
@@ -396,6 +426,22 @@ def main() -> int:
                     timeout=args.timeout_seconds,
                 )
             )
+    except BrowserChallenge as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error_code": "bot_challenge",
+                    "error": str(exc),
+                    "next_question": (
+                        "Please complete the ChoiceADVANTAGE access verification in the "
+                        "persistent browser. Is it ready for one new bounded report pull?"
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        return 3
     except (OSError, LoginError, ReportPullError, ValueError) as exc:
         print(
             json.dumps(
@@ -413,7 +459,10 @@ def main() -> int:
         return 2
     finally:
         if session is not None:
-            session.close()
+            try:
+                session.close()
+            except Exception:
+                pass
     print(json.dumps({"status": "ok", "reports": results}, sort_keys=True))
     return 0
 

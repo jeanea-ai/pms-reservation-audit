@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.7"
+version: "0.4.8"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.7"
+  version: "0.4.8"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -101,8 +101,8 @@ The command itself uses no model calls.
    one-time test, use `--session-only --timezone <IANA-zone>` instead. Never put
    `--session-only` on a schedule.
 
-   When the operator explicitly accepts Chrome's saved credentials for temporary
-   cron testing, add `--browser-saved-login`, `--timezone <IANA-zone>`, and
+   When the operator explicitly accepts Chrome's saved credentials for one-time
+   testing, add `--browser-saved-login`, `--timezone <IANA-zone>`, and
    `--allow-skip-mfa`. This path checks only whether both login fields autofilled;
    it never reads or returns their values. It reuses an active session first and
    stops if autofill or the exact official **Skip MFA** control is unavailable.
@@ -150,6 +150,32 @@ records in chat, or begin open-ended browser experiments.
 - Confirm the active property and required reports are accessible. Record any
   inaccessible report, page, record, or field as a limitation.
 - Do not claim completion after a session expires or a required page is missed.
+
+## Browser reliability and access challenges
+
+Browser automation uses a fixed 0.75-second interaction pace by default. This
+reduces page-state races and avoids bursty navigation; it is not a claim that a
+human performed the action. Ordinary visible controls are selected by stable DOM
+identity, located immediately before use, activated with CDP-dispatched
+browser-trusted mouse events, and then verified from the resulting page state.
+The authenticated source-PDF request remains an in-page same-origin fetch so it
+never opens Chrome's PDF viewer.
+
+Select the exact ChoiceADVANTAGE page target. Prefer the reports page over login,
+other PMS pages, or a stale report-proxy/PDF target. If two targets are equally
+valid, stop instead of choosing by tab order. Never close or repurpose an
+unrelated browser tab.
+
+Treat a recognized CAPTCHA widget, human-verification or unusual-traffic page,
+access block, or report response HTTP 403/429 as `error_code: bot_challenge`.
+Do not retry that condition inside the same run. Ask the emitted manual
+verification question and permit only one new bounded run after the operator
+confirms the persistent browser is ready. Never use fingerprint spoofing,
+stealth patches, proxy rotation, CAPTCHA solvers, or attempts to conceal CDP.
+
+`--interaction-delay-seconds` may be set from 0.25 through 3 seconds for a
+measured reliability need. Do not randomize it or increase it merely to imitate
+human behavior.
 
 ## Guest Ledger input
 

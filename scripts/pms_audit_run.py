@@ -16,8 +16,10 @@ try:
     from scripts.audit_report import render_pdf_atomic
     from scripts.pms_access import AccessError, CODE_RE, resolve_access
     from scripts.pms_login import (
+        BrowserChallenge,
         CdpSession,
         DEFAULT_CDP_URL,
+        DEFAULT_INTERACTION_DELAY,
         LoginError,
         REPORTS_URL,
         _page_websocket,
@@ -31,8 +33,10 @@ except ModuleNotFoundError:
     from audit_report import render_pdf_atomic
     from pms_access import AccessError, CODE_RE, resolve_access
     from pms_login import (
+        BrowserChallenge,
         CdpSession,
         DEFAULT_CDP_URL,
+        DEFAULT_INTERACTION_DELAY,
         LoginError,
         REPORTS_URL,
         _page_websocket,
@@ -89,15 +93,19 @@ def _failure(
     run_dir: Path | None = None,
     *,
     source_failures: dict[str, str] | None = None,
+    error_code: str | None = None,
+    next_question: str | None = None,
 ) -> dict:
     payload = {
         "status": "failed",
         "error": error,
-        "next_question": (
+        "next_question": next_question or (
             "The bounded audit stopped without retrying indefinitely. Should I preserve "
             "this run for diagnosis and try one new bounded run later?"
         ),
     }
+    if error_code:
+        payload["error_code"] = error_code
     if run_dir is not None:
         payload["run_dir"] = str(run_dir)
     if source_failures:
@@ -160,6 +168,11 @@ def main() -> int:
     parser.add_argument("--test-access-file", type=Path)
     parser.add_argument("--allow-skip-mfa", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument(
+        "--interaction-delay-seconds",
+        type=float,
+        default=DEFAULT_INTERACTION_DELAY,
+    )
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
     args = parser.parse_args()
     if args.session_only and (
@@ -179,6 +192,8 @@ def main() -> int:
         parser.error("--allow-skip-mfa requires an explicit test login mode")
     if not 1 <= args.timeout_seconds <= 120:
         parser.error("--timeout-seconds must be between 1 and 120")
+    if not 0.25 <= args.interaction_delay_seconds <= 3:
+        parser.error("--interaction-delay-seconds must be between 0.25 and 3")
 
     run_dir = None
     session = None
@@ -191,6 +206,7 @@ def main() -> int:
             login_result = login_with_browser_saved_access(
                 cdp_url=args.cdp_url,
                 allow_skip_mfa=args.allow_skip_mfa,
+                interaction_delay=args.interaction_delay_seconds,
             )
             if login_result["status"] != "authenticated":
                 print(json.dumps(login_result, sort_keys=True))
@@ -206,6 +222,7 @@ def main() -> int:
                 access,
                 cdp_url=args.cdp_url,
                 allow_skip_mfa=args.allow_skip_mfa,
+                interaction_delay=args.interaction_delay_seconds,
             )
             if login_result["status"] != "authenticated":
                 print(json.dumps(login_result, sort_keys=True))
@@ -219,7 +236,10 @@ def main() -> int:
         run_dir = _new_run_dir(args.output_root, now)
         state_file = run_dir / "capture-state.json"
 
-        session = CdpSession(_page_websocket(args.cdp_url))
+        session = CdpSession(
+            _page_websocket(args.cdp_url),
+            interaction_delay=args.interaction_delay_seconds,
+        )
         session.call("Page.enable")
         acquisition: dict[str, dict] = {}
         failures: dict[str, str] = {}
@@ -233,6 +253,8 @@ def main() -> int:
                     state_file=state_file,
                     timeout=args.timeout_seconds,
                 )
+            except BrowserChallenge:
+                raise
             except (LoginError, ReportPullError) as exc:
                 failures[key] = str(exc)
 
@@ -287,6 +309,22 @@ def main() -> int:
             result["duplicate_counts"] = analysis["counts"]
         print(json.dumps(result, sort_keys=True))
         return 0
+    except BrowserChallenge as exc:
+        print(
+            json.dumps(
+                _failure(
+                    str(exc),
+                    run_dir,
+                    error_code="bot_challenge",
+                    next_question=(
+                        "Please complete the ChoiceADVANTAGE access verification in the "
+                        "persistent browser. Is it ready for one new bounded audit?"
+                    ),
+                ),
+                sort_keys=True,
+            )
+        )
+        return 3
     except (
         AccessError,
         LoginError,

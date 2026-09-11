@@ -46,6 +46,10 @@ chat summary:
 - **Verified output** — every complete or partial audit produces one validated,
   structurally checked PDF. Full visual QA runs when layout code changes, not
   during routine data-only audits.
+- **Paced browser control** — targets the exact PMS tab, applies a small fixed
+  interaction delay, uses browser-trusted mouse events for visible controls,
+  and stops for recognized access-verification challenges instead of trying to
+  bypass them.
 
 ## Usage
 
@@ -103,7 +107,8 @@ flags.
 - `scripts/pms_login.py` — injects credentials directly into the persistent
   ChoiceADVANTAGE browser, reuses an authenticated session, and in standalone
   test mode can select only the exact official **Skip MFA** control when
-  explicitly authorized.
+  explicitly authorized. It deterministically targets the PMS tab, paces
+  site-facing actions, and classifies known access challenges.
 - `scripts/pms_report_pull.py` — selects the two exact reports, sets the required
   arrival window, captures the original authenticated response without entering
   Chrome's PDF viewer, and permits only one fresh-parameter retry.
