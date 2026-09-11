@@ -8,7 +8,9 @@ from datetime import datetime
 import fcntl
 import json
 from pathlib import Path
+import signal
 import tempfile
+import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 try:
@@ -154,6 +156,14 @@ def _redacted_summary(payload: dict, analysis: dict | None) -> dict:
     return summary
 
 
+class AuditTerminated(RuntimeError):
+    """Raised when the command runner asks the audit process to stop."""
+
+
+def _handle_sigterm(_signum, _frame) -> None:
+    raise AuditTerminated("the audit was stopped by the command runner (SIGTERM)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hotel", required=True)
@@ -168,6 +178,7 @@ def main() -> int:
     parser.add_argument("--test-access-file", type=Path)
     parser.add_argument("--allow-skip-mfa", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--overall-timeout-seconds", type=float, default=240.0)
     parser.add_argument(
         "--interaction-delay-seconds",
         type=float,
@@ -192,12 +203,18 @@ def main() -> int:
         parser.error("--allow-skip-mfa requires an explicit test login mode")
     if not 1 <= args.timeout_seconds <= 120:
         parser.error("--timeout-seconds must be between 1 and 120")
+    if not 120 <= args.overall_timeout_seconds <= 1800:
+        parser.error("--overall-timeout-seconds must be between 120 and 1800")
     if not 0.25 <= args.interaction_delay_seconds <= 3:
         parser.error("--interaction-delay-seconds must be between 0.25 and 3")
 
     run_dir = None
     session = None
     run_lock = None
+    overall_deadline = time.monotonic() + args.overall_timeout_seconds
+    terminated = False
+    current_stage = "starting"
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         run_lock = _acquire_run_lock(args.output_root, args.hotel)
         access = None
@@ -235,6 +252,16 @@ def main() -> int:
         local_day = now.date()
         run_dir = _new_run_dir(args.output_root, now)
         state_file = run_dir / "capture-state.json"
+        status_file = run_dir / "run-status.json"
+        current_stage = "opening_browser"
+        _atomic_json(
+            status_file,
+            {
+                "status": "running",
+                "stage": current_stage,
+                "property_code": args.hotel.upper(),
+            },
+        )
 
         session = CdpSession(
             _page_websocket(args.cdp_url),
@@ -244,6 +271,15 @@ def main() -> int:
         acquisition: dict[str, dict] = {}
         failures: dict[str, str] = {}
         for key, spec in REPORTS.items():
+            current_stage = f"acquiring_{key}"
+            _atomic_json(
+                status_file,
+                {
+                    "status": "running",
+                    "stage": current_stage,
+                    "property_code": args.hotel.upper(),
+                },
+            )
             try:
                 acquisition[key] = pull_report(
                     session,
@@ -252,6 +288,7 @@ def main() -> int:
                     output=run_dir / spec.filename,
                     state_file=state_file,
                     timeout=args.timeout_seconds,
+                    overall_deadline=overall_deadline,
                 )
             except BrowserChallenge:
                 raise
@@ -273,6 +310,15 @@ def main() -> int:
 
         guest_path = run_dir / REPORTS["guest-ledger"].filename
         future_path = run_dir / REPORTS["future-reservations"].filename
+        current_stage = "building_report"
+        _atomic_json(
+            status_file,
+            {
+                "status": "running",
+                "stage": current_stage,
+                "property_code": args.hotel.upper(),
+            },
+        )
         payload = build_audit_input(
             guest_ledger_text=read_report_text(str(guest_path)) if guest_path.exists() else None,
             future_reservation_texts=(
@@ -307,8 +353,41 @@ def main() -> int:
         }
         if analysis:
             result["duplicate_counts"] = analysis["counts"]
+        _atomic_json(
+            status_file,
+            {"status": "ok", "stage": "complete", "property_code": args.hotel.upper()},
+        )
         print(json.dumps(result, sort_keys=True))
         return 0
+    except AuditTerminated as exc:
+        terminated = True
+        if run_dir is not None:
+            try:
+                _atomic_json(
+                    run_dir / "run-status.json",
+                    {
+                        "status": "failed",
+                        "stage": "terminated",
+                        "last_stage": current_stage,
+                        "property_code": args.hotel.upper(),
+                    },
+                )
+            except OSError:
+                # Preserve the structured stdout result even if the filesystem
+                # is unavailable while the process is being terminated.
+                pass
+        result = _failure(
+            str(exc),
+            run_dir,
+            error_code="terminated",
+            next_question=(
+                "The command runner stopped the audit before completion. Should I "
+                "preserve this run and inspect its last recorded stage?"
+            ),
+        )
+        result["last_stage"] = current_stage
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 143
     except BrowserChallenge as exc:
         print(
             json.dumps(
@@ -339,10 +418,11 @@ def main() -> int:
         if session is not None:
             # Leave the shared acquisition tab at a deterministic starting page.
             # The final audit PDF is written to disk and is never opened here.
-            try:
-                session.navigate(REPORTS_URL)
-            except Exception:
-                pass
+            if not terminated:
+                try:
+                    session.navigate(REPORTS_URL)
+                except Exception:
+                    pass
             try:
                 session.close()
             except Exception:

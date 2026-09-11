@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 from scripts.pms_login import (
     BrowserChallenge,
-    CdpSession,
     _browser_saved_fields_present,
     _click_traditional_login_continue,
     _has_traditional_login_continue,
@@ -75,21 +73,6 @@ class PmsLoginTests(unittest.TestCase):
                 ]
             )
 
-    def test_cdp_trusted_click_uses_input_domain_after_pacing(self):
-        session = CdpSession.__new__(CdpSession)
-        session.interaction_delay = 0.75
-        calls = []
-        session.call = lambda method, params=None: calls.append((method, params)) or {}
-        with patch("scripts.pms_login.time.sleep") as sleep:
-            session.trusted_click(10.0, 20.0)
-        sleep.assert_called_once_with(0.75)
-        self.assertEqual([call[0] for call in calls], [
-            "Input.dispatchMouseEvent",
-            "Input.dispatchMouseEvent",
-        ])
-        self.assertEqual(calls[0][1]["type"], "mousePressed")
-        self.assertEqual(calls[1][1]["type"], "mouseReleased")
-
     def test_page_change_signature_includes_body(self):
         before = {"url": "https://example.test/Login.do", "title": "Choice", "ready": "complete", "body": "Login"}
         after = {**before, "body": "Skip MFA"}
@@ -102,12 +85,10 @@ class PmsLoginTests(unittest.TestCase):
 
             def evaluate(self, expression, **kwargs):
                 self.expressions.append(expression)
-                if "getBoundingClientRect" in expression:
-                    return {"x": 1, "y": 2}
                 return True
 
-            def trusted_click(self, x, y):
-                self.expressions.append(f"trusted_click:{x}:{y}")
+            def pace(self):
+                self.expressions.append("pace")
 
         session = FakeSession()
         self.assertTrue(_has_traditional_login_continue(session))

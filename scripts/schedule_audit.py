@@ -105,6 +105,8 @@ def build_create_command(
         hotel,
         "--timeout-seconds",
         str(args.audit_timeout_seconds),
+        "--overall-timeout-seconds",
+        str(args.overall_timeout_seconds),
         "--output-root",
         str(output_root),
     ]
@@ -164,6 +166,10 @@ def create_schedule(args: argparse.Namespace) -> dict:
         raise ValueError("audit-timeout-seconds must be between 1 and 120")
     if not 120 <= args.job_timeout_seconds <= 3600:
         raise ValueError("job-timeout-seconds must be between 120 and 3600")
+    if not 120 <= args.overall_timeout_seconds <= 1800:
+        raise ValueError("overall-timeout-seconds must be between 120 and 1800")
+    if args.job_timeout_seconds < args.overall_timeout_seconds + 60:
+        raise ValueError("job-timeout-seconds must exceed the audit deadline by at least 60")
     if args.announce_to and not re.fullmatch(r"kolo:[A-Za-z0-9._:-]+", args.announce_to):
         raise ValueError("announce-to must be an explicit kolo:<chat-id> destination")
 
@@ -233,6 +239,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output-root", required=True)
     result.add_argument("--name")
     result.add_argument("--audit-timeout-seconds", type=int, default=90)
+    result.add_argument("--overall-timeout-seconds", type=int, default=480)
     result.add_argument("--job-timeout-seconds", type=int, default=900)
     result.add_argument("--announce-to", help="exact Kolo destination: kolo:<chat-id>")
     result.add_argument("--exact", action="store_true", help="disable cron staggering")

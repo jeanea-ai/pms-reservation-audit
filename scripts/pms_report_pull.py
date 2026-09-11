@@ -107,7 +107,22 @@ def _wait_for_value(
     raise ReportPullError(failure)
 
 
-def _open_report_form(session: CdpSession, spec: ReportSpec, timeout: float) -> None:
+def _remaining_timeout(timeout: float, overall_deadline: float | None) -> float:
+    if overall_deadline is None:
+        return timeout
+    remaining = overall_deadline - time.monotonic()
+    if remaining <= 0:
+        raise ReportPullError("overall audit deadline exceeded")
+    return min(timeout, remaining)
+
+
+def _open_report_form(
+    session: CdpSession,
+    spec: ReportSpec,
+    timeout: float,
+    *,
+    overall_deadline: float | None = None,
+) -> None:
     session.navigate(REPORTS_URL)
     encoded_id = json.dumps(spec.menu_id)
     encoded_label = json.dumps(spec.menu_label)
@@ -119,32 +134,30 @@ def _open_report_form(session: CdpSession, spec: ReportSpec, timeout: float) -> 
           const node = document.getElementById({encoded_id});
           return !!node && (node.textContent || '').trim() === {encoded_label} ? 'ready' : '';
         }})()""",
-        timeout=timeout,
+        timeout=_remaining_timeout(timeout, overall_deadline),
         failure=f"{spec.menu_label} is unavailable on the reports menu",
     )
     if menu_state == "login":
         raise AuthenticationRequired("the persistent browser is not authenticated")
-    point = session.evaluate(
+    session.pace()
+    clicked = session.evaluate(
         f"""(() => {{
           const node = document.getElementById({encoded_id});
-          if (!node || (node.textContent || '').trim() !== {encoded_label}) return null;
-          const rect = node.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return null;
-          return {{x: rect.x + rect.width / 2, y: rect.y + rect.height / 2}};
+          if (!node || (node.textContent || '').trim() !== {encoded_label}) return false;
+          node.click();
+          return true;
         }})()""",
+        user_gesture=True,
     )
-    if not isinstance(point, dict) or not isinstance(point.get("x"), (int, float)) or not isinstance(
-        point.get("y"), (int, float)
-    ):
+    if not clicked:
         raise ReportPullError(f"could not open {spec.menu_label}")
-    session.trusted_click(float(point["x"]), float(point["y"]))
     encoded_form = json.dumps(spec.form_name)
     _wait_for_value(
         session,
         f"""(() => !!document.querySelector(
           'form[name=' + CSS.escape({encoded_form}) + ']'
         ) && !!document.querySelector('#doSubmit'))()""",
-        timeout=timeout,
+        timeout=_remaining_timeout(timeout, overall_deadline),
         failure=f"{spec.menu_label} parameters did not load",
     )
 
@@ -195,7 +208,12 @@ def _prepare_form(session: CdpSession, spec: ReportSpec, local_day: date) -> dic
     return result
 
 
-def _capture_submit(session: CdpSession, timeout: float) -> bytes:
+def _capture_submit(
+    session: CdpSession,
+    timeout: float,
+    *,
+    overall_deadline: float | None = None,
+) -> bytes:
     started = session.evaluate(
         """(() => {
           if (window.__pmsAuditCapture) return {started: false, code: 'already_used'};
@@ -268,7 +286,7 @@ def _capture_submit(session: CdpSession, timeout: float) -> bytes:
         code = started.get("code") if isinstance(started, dict) else "capture_not_started"
         raise ReportPullError(f"report capture did not start ({code})")
 
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + _remaining_timeout(timeout, overall_deadline)
     state = None
     while time.monotonic() < deadline:
         state = session.evaluate(
@@ -348,16 +366,27 @@ def pull_report(
     state_file: Path,
     timeout: float,
     max_attempts: int = 2,
+    overall_deadline: float | None = None,
 ) -> dict:
     if output.exists():
         raise ReportPullError(f"refusing to overwrite existing artifact: {output}")
     failures: list[str] = []
     for attempt in range(1, max_attempts + 1):
         try:
-            _open_report_form(session, spec, timeout)
+            _remaining_timeout(timeout, overall_deadline)
+            _open_report_form(
+                session,
+                spec,
+                timeout,
+                overall_deadline=overall_deadline,
+            )
             parameters = _prepare_form(session, spec, local_day)
             session.pace()
-            response = _capture_submit(session, timeout)
+            response = _capture_submit(
+                session,
+                timeout,
+                overall_deadline=overall_deadline,
+            )
             record = preserve_response(
                 response,
                 output,

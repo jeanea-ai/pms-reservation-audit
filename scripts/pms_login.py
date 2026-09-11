@@ -114,14 +114,6 @@ class CdpSession:
         """Apply a small deterministic gap between site-facing interactions."""
         time.sleep(self.interaction_delay)
 
-    def trusted_click(self, x: float, y: float) -> None:
-        """Dispatch one browser-trusted click at previously verified coordinates."""
-        self.pace()
-        common = {"x": x, "y": y, "button": "left", "clickCount": 1}
-        self.call("Input.dispatchMouseEvent", {"type": "mousePressed", **common})
-        self.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **common})
-
-
 def _select_page_target(pages: list[dict]) -> dict:
     def priority(target: dict) -> int:
         raw_url = str(target.get("url") or "")
@@ -259,26 +251,23 @@ def _has_exact_control(session: CdpSession, label: str) -> bool:
     )
 
 
-def _trusted_click_point(session: CdpSession, expression: str, failure: str) -> None:
-    point = session.evaluate(expression)
-    if not isinstance(point, dict) or not isinstance(point.get("x"), (int, float)) or not isinstance(
-        point.get("y"), (int, float)
-    ):
+def _click_control(session: CdpSession, expression: str, failure: str) -> None:
+    session.pace()
+    clicked = session.evaluate(expression, user_gesture=True)
+    if not clicked:
         raise LoginError(failure)
-    session.trusted_click(float(point["x"]), float(point["y"]))
 
 
 def _click_exact_control(session: CdpSession, label: str) -> None:
     encoded = json.dumps(label.casefold())
-    _trusted_click_point(
+    _click_control(
         session,
         f"""(() => {{
           const node = [...document.querySelectorAll('a,button,input[type=button],input[type=submit]')]
             .find(item => ((item.textContent || item.value || '').trim().toLowerCase() === {encoded}));
-          if (!node) return null;
-          const rect = node.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return null;
-          return {{x: rect.x + rect.width / 2, y: rect.y + rect.height / 2}};
+          if (!node) return false;
+          node.click();
+          return true;
         }})()""",
         f"expected {label!r} control is unavailable",
     )
@@ -295,32 +284,30 @@ def _has_traditional_login_continue(session: CdpSession) -> bool:
 
 
 def _click_traditional_login_continue(session: CdpSession) -> None:
-    _trusted_click_point(
+    _click_control(
         session,
         """(() => {
           const node = [...document.querySelectorAll('a')].find(item =>
             (item.textContent || '').trim() === 'Continue' &&
             /formSubmit/.test(item.getAttribute('onclick') || ''));
-          if (!node) return null;
-          const rect = node.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return null;
-          return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
+          if (!node) return false;
+          node.click();
+          return true;
         })()""",
         "traditional-login Continue control is unavailable",
     )
 
 
 def _click_login_control(session: CdpSession) -> None:
-    _trusted_click_point(
+    _click_control(
         session,
         """(() => {
           const node = [...document.querySelectorAll('button,input[type=submit],a')]
             .find(item => /^(login|sign in)$/i.test(
               (item.textContent || item.value || '').trim()));
-          if (!node) return null;
-          const rect = node.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return null;
-          return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2};
+          if (!node) return false;
+          node.click();
+          return true;
         })()""",
         "ChoiceADVANTAGE login control was not found",
     )

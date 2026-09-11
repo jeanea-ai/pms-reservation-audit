@@ -47,9 +47,13 @@ chat summary:
   structurally checked PDF. Full visual QA runs when layout code changes, not
   during routine data-only audits.
 - **Paced browser control** — targets the exact PMS tab, applies a small fixed
-  interaction delay, uses browser-trusted mouse events for visible controls,
+  interaction delay, uses the proven DOM controls with state verification,
   and stops for recognized access-verification challenges instead of trying to
   bypass them.
+- **Bounded duration** — caps an on-demand audit at four minutes by default;
+  individual 90-second waits and retries cannot multiply beyond that deadline.
+  Scheduled commands use an explicit eight-minute audit budget inside a
+  fifteen-minute job budget.
 
 ## Usage
 

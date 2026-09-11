@@ -57,6 +57,9 @@ class ScheduleAuditTests(unittest.TestCase):
         runner = json.loads(command[command.index("--command-argv") + 1])
         self.assertTrue(runner[1].endswith("scripts/pms_audit_run.py"))
         self.assertIn("CAF15", runner)
+        self.assertEqual(
+            runner[runner.index("--overall-timeout-seconds") + 1], "480"
+        )
         for forbidden in (
             "--test-access",
             "--test-access-file",
@@ -159,6 +162,18 @@ class ScheduleAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "kolo:<chat-id>"):
                 create_schedule(self._cron_args(tmp, "--announce-to", "last"))
+
+    def test_job_timeout_must_leave_shutdown_margin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self._cron_args(
+                tmp,
+                "--overall-timeout-seconds",
+                "480",
+                "--job-timeout-seconds",
+                "500",
+            )
+            with self.assertRaisesRegex(ValueError, "at least 60"):
+                create_schedule(args)
 
 
 if __name__ == "__main__":

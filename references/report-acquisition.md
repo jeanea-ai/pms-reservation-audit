@@ -61,12 +61,12 @@ targets. Refuse equally valid matches instead of selecting by tab order.
 The login contract uses stable DOM semantics rather than visual interpretation:
 `input[name="j_username"]`, `input[name="j_password"]`, an exact **Login** or
 **Sign in** control, the traditional-login **Continue** handler, and the exact
-**Skip MFA** label. Locate each visible control immediately before use and send
-a CDP `Input.dispatchMouseEvent` press/release pair at its verified center, then
-verify the resulting page state. These events are browser-trusted but must not be
-described as proof of a human action. If any required selector or exact control
-is absent, stop; never guess from screen position, screenshots, OCR, or
-approximate text.
+**Skip MFA** label. Locate each visible control immediately before use, perform
+the proven DOM click under a user-gesture context, then verify the resulting page
+state. Do not substitute coordinate input merely because it appears more human;
+the live ChoiceADVANTAGE report menu did not respond to that approach. If any
+required selector or exact control is absent, stop; never guess from screen
+position, screenshots, OCR, or approximate text.
 
 Use a deterministic 0.75-second gap between site-facing navigations and clicks
 unless a measured test justifies another value from 0.25 through 3 seconds. This
@@ -78,6 +78,12 @@ blocks, known challenge URLs, and report HTTP 403/429 responses as
 `bot_challenge`. Stop immediately without consuming the normal report retry.
 The operator must complete any permitted verification manually in the
 persistent browser before one new bounded run.
+
+An on-demand audit has a four-minute overall deadline by default. Individual
+page/report waits are capped by both their own timeout and the remaining overall
+budget, so two reports and bounded retries cannot multiply a 90-second setting
+into an unexpectedly long run. Scheduled commands explicitly use an eight-minute
+audit budget inside a fifteen-minute job budget.
 
 ## Navigate and set parameters
 

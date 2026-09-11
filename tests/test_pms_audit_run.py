@@ -7,14 +7,20 @@ import unittest
 from zoneinfo import ZoneInfo
 
 from scripts.pms_audit_run import (
+    AuditTerminated,
     _acquire_run_lock,
     _failure,
+    _handle_sigterm,
     _new_run_dir,
     _redacted_summary,
 )
 
 
 class PmsAuditRunTests(unittest.TestCase):
+    def test_sigterm_becomes_a_structured_audit_termination(self):
+        with self.assertRaisesRegex(AuditTerminated, "SIGTERM"):
+            _handle_sigterm(None, None)
+
     def test_run_directory_never_reuses_existing_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
             now = datetime(2026, 9, 10, 8, 30, tzinfo=ZoneInfo("America/Los_Angeles"))

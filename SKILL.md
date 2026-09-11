@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.8"
+version: "0.4.9"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.8"
+  version: "0.4.9"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -157,7 +157,9 @@ Browser automation uses a fixed 0.75-second interaction pace by default. This
 reduces page-state races and avoids bursty navigation; it is not a claim that a
 human performed the action. Ordinary visible controls are selected by stable DOM
 identity, located immediately before use, activated with CDP-dispatched
-browser-trusted mouse events, and then verified from the resulting page state.
+DOM clicks under a user-gesture context, and then verified from the resulting
+page state. Do not replace a proven site control with coordinate clicking unless
+the DOM action first fails in a measured test.
 The authenticated source-PDF request remains an in-page same-origin fetch so it
 never opens Chrome's PDF viewer.
 
@@ -176,6 +178,12 @@ stealth patches, proxy rotation, CAPTCHA solvers, or attempts to conceal CDP.
 `--interaction-delay-seconds` may be set from 0.25 through 3 seconds for a
 measured reliability need. Do not randomize it or increase it merely to imitate
 human behavior.
+
+`pms_audit_run.py` has a true four-minute overall deadline by default, exposed
+as `--overall-timeout-seconds`. The per-operation `--timeout-seconds` never
+extends that deadline. Scheduled commands explicitly use an eight-minute audit
+budget inside a fifteen-minute job budget, leaving time for shutdown and final
+output.
 
 ## Guest Ledger input
 

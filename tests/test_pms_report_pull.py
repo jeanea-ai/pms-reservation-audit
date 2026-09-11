@@ -11,7 +11,9 @@ from scripts.pms_login import BrowserChallenge, CdpSession, _page_websocket
 from scripts.pms_report_pull import (
     REPORTS,
     _capture_submit,
+    _open_report_form,
     _prepare_form,
+    _remaining_timeout,
     same_date_next_year,
 )
 
@@ -54,6 +56,29 @@ class FakeFormSession:
     def evaluate(self, expression, **kwargs):
         self.expression = expression
         return self.result
+
+
+class FakeMenuSession:
+    def __init__(self):
+        self.expressions = []
+        self.pace_count = 0
+        self.navigations = []
+
+    def navigate(self, url):
+        self.navigations.append(url)
+
+    def pace(self):
+        self.pace_count += 1
+
+    def evaluate(self, expression, **kwargs):
+        self.expressions.append((expression, kwargs))
+        if "input[name=\"j_username\"]" in expression:
+            return "ready"
+        if "node.click()" in expression:
+            return True
+        if "CSS.escape" in expression:
+            return True
+        return None
 
 
 class FakeWebSocket:
@@ -115,6 +140,20 @@ class PmsReportPullTests(unittest.TestCase):
         self.assertIn('"bookingDateFrom": ""', session.expression)
         self.assertIn('"bookingDateTo": ""', session.expression)
         self.assertNotIn("form.target = '_self'", session.expression)
+
+    def test_report_menu_uses_proven_paced_dom_click(self):
+        session = FakeMenuSession()
+        _open_report_form(session, REPORTS["guest-ledger"], 1)
+        rendered = "\n".join(item[0] for item in session.expressions)
+        self.assertIn("node.click()", rendered)
+        self.assertNotIn("Input.dispatchMouseEvent", rendered)
+        self.assertEqual(session.pace_count, 1)
+
+    def test_overall_deadline_caps_each_browser_wait(self):
+        with patch("scripts.pms_report_pull.time.monotonic", return_value=100.0):
+            self.assertEqual(_remaining_timeout(90, 105.0), 5.0)
+            with self.assertRaisesRegex(Exception, "overall audit deadline"):
+                _remaining_timeout(90, 99.0)
 
     def test_guest_form_preserves_default_business_date(self):
         session = FakeFormSession({"business_date": "9/9/2026"})
