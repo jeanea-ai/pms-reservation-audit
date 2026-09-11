@@ -52,6 +52,21 @@ naturally — for example:
 - "Find duplicate reservations in ChoiceADVANTAGE."
 - "Are there repeat offenders booking with us?"
 
+### Production PMS Setup access
+
+Production execution consumes the property and credential contract owned by
+`mf-hotel-pms-setup`; it never writes to that skill's configuration. Verify the
+contract once after onboarding or credential changes:
+
+```bash
+python3 scripts/pms_access.py --hotel CAF15
+python3 scripts/readiness.py --hotel CAF15
+```
+
+The checks return presence and source metadata only. A production audit uses
+`pms_audit_run.py` without any test, session-only, browser-saved, or MFA-skip
+flags.
+
 ## Structure
 
 - `SKILL.md` — the complete skill definition (trigger description + workflow).

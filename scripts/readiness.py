@@ -67,6 +67,7 @@ def inspect(
     skill_dir: Path,
     environ: dict[str, str] | None = None,
     *,
+    production_hotel: str | None = None,
     test_hotel: str | None = None,
     test_access_file: Path | None = None,
 ):
@@ -137,6 +138,21 @@ def inspect(
             ))
         except AccessError as exc:
             results.append(_result("FAIL", "standalone test access", str(exc)))
+    elif production_hotel:
+        try:
+            production_access = resolve_access(production_hotel, environ=env)
+            results.append(
+                _result(
+                    "PASS",
+                    "PMS Setup access",
+                    (
+                        f"{production_access['property_code']} resolves through "
+                        f"{production_access['source']} (values not displayed)"
+                    ),
+                )
+            )
+        except AccessError as exc:
+            results.append(_result("FAIL", "PMS Setup access", str(exc)))
     else:
         configured_secret = env.get("CHOICEADVANTAGE_SECRETS_FILE")
         secret_path = Path(configured_secret) if configured_secret else workspace / "kolo-hotels" / "config" / ".secrets.json"
@@ -187,6 +203,7 @@ def main() -> int:
     skill_dir = Path(__file__).resolve().parent.parent
     results = inspect(
         skill_dir,
+        production_hotel=args.hotel if args.hotel and not args.test_access else None,
         test_hotel=args.hotel if args.test_access else None,
         test_access_file=args.test_access_file,
     )

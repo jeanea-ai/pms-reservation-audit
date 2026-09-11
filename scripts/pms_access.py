@@ -136,6 +136,9 @@ def resolve_access(
         )
     )
     config = _read_json(root / f"{normalized}.json", "PMS Setup property config")
+    configured_code = str(config.get("property_code") or normalized).strip().upper()
+    if configured_code != normalized:
+        raise AccessError("PMS Setup property config does not match --hotel")
     status = str(config.get("status") or "")
     if status in {"NEW", "ACCESS_PENDING"}:
         raise AccessError(
@@ -153,7 +156,13 @@ def resolve_access(
     }:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
 
-    secrets = _read_json(root / ".secrets.json", "PMS Setup secrets file")
+    environment_password = env.get(f"PMS_PASSWORD_{normalized}") or env.get(
+        "PMS_PASSWORD"
+    )
+    secrets_path = root / ".secrets.json"
+    secrets = {}
+    if not environment_password and secrets_path.exists():
+        secrets = _read_json(secrets_path, "PMS Setup secrets file")
     scoped = secrets.get(normalized) or secrets.get(normalized.lower()) or {}
     if not isinstance(scoped, dict):
         scoped = {}
@@ -169,8 +178,7 @@ def resolve_access(
         or legacy.get("j_username")
     )
     password = (
-        env.get(f"PMS_PASSWORD_{normalized}")
-        or env.get("PMS_PASSWORD")
+        environment_password
         or scoped.get("pms_password")
         or scoped.get("password")
         or legacy.get("password")
@@ -181,7 +189,14 @@ def resolve_access(
             "Choice username is missing from pms.legacy_username and legacy fallbacks"
         )
     if not isinstance(password, str) or not password:
-        raise AccessError("Choice password is not resolvable from the established secret paths")
+        password_ref = pms.get("password_ref")
+        if password_ref:
+            raise AccessError(
+                "PMS Setup password_ref is present but its credential provider is unavailable"
+            )
+        raise AccessError(
+            "Choice password is not resolvable from the established secret paths"
+        )
     timezone = _validated_timezone(config.get("timezone"))
 
     return {

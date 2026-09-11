@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.4.5"
+version: "0.4.6"
 description: >
   Self-contained, on-demand, read-only ChoiceADVANTAGE (SkyTouch) audit for guest-ledger
   recent No Show and Cancelled balances, all Group balances, duplicate reservations, and
@@ -9,7 +9,8 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.4.5"
+  version: "0.4.6"
+requires: [mf-hotel-pms-setup]
 ---
 
 # PMS Reconciliation
@@ -18,6 +19,28 @@ Run this on demand unless the operator explicitly requests a temporary test
 schedule. It is strictly read-only: never edit, cancel, merge, create, or
 otherwise modify any PMS record. Every audit must use fresh reports; never reuse
 report data from an earlier run.
+
+## Production access through PMS Setup
+
+`mf-hotel-pms-setup` owns the property record and credentials. This skill is a
+read-only consumer and must never create, update, or repair PMS Setup state.
+After onboarding or a credential/configuration change, run exactly one
+non-secret contract check:
+
+`python3 scripts/pms_access.py --hotel <CODE>`
+
+It must report `source: mf-hotel-pms-setup`, `test_only: false`, and presence
+only for username/password. Production audits then use the normal command with
+no `--test-access`, `--test-access-file`, `--session-only`,
+`--browser-saved-login`, or `--allow-skip-mfa` flags. The deterministic resolver
+reads the property code, timezone, vendor and legacy username from PMS Setup,
+then resolves the password from its established protected environment or
+`.secrets.json` path without displaying any value.
+
+If PMS Setup exposes only a `pms.password_ref`, stop with the emitted credential
+provider error until the owning skill's resolver is integrated. Never interpret
+the reference, query an undocumented vault, or fall back to test credentials for
+a production run.
 
 ## Standalone test access
 

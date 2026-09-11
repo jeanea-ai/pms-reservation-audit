@@ -46,6 +46,57 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual(config_before, (self.root / "CAF15.json").read_bytes())
         self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
 
+    def test_pms_setup_environment_password_does_not_require_secret_file(self):
+        self._write_config(
+            {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
+        )
+        access = resolve_access(
+            "CAF15",
+            environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+            config_dir=self.root,
+        )
+        self.assertEqual(access["password"], "environment-secret")
+        self.assertEqual(access["source"], "mf-hotel-pms-setup")
+        self.assertFalse(access["test_only"])
+
+    def test_environment_password_precedes_unreadable_secret_file(self):
+        self._write_config(
+            {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
+        )
+        (self.root / ".secrets.json").write_text("not-json", encoding="utf-8")
+        access = resolve_access(
+            "CAF15",
+            environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+            config_dir=self.root,
+        )
+        self.assertEqual(access["password"], "environment-secret")
+
+    def test_pms_setup_property_code_must_match_requested_hotel(self):
+        self._write_config(
+            {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
+        )
+        config_path = self.root / "CAF15.json"
+        config = json.loads(config_path.read_text())
+        config["property_code"] = "OTHER"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        with self.assertRaisesRegex(AccessError, "does not match"):
+            resolve_access(
+                "CAF15",
+                environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+                config_dir=self.root,
+            )
+
+    def test_unresolved_password_ref_fails_with_specific_provider_error(self):
+        self._write_config(
+            {
+                "vendor": "choice_advantage",
+                "legacy_username": "KUser.caf15",
+                "password_ref": "vault://choice/caf15",
+            }
+        )
+        with self.assertRaisesRegex(AccessError, "credential provider"):
+            resolve_access("CAF15", environ={}, config_dir=self.root)
+
     def test_real_pms_setup_vendor_label_resolves_without_mutation(self):
         self._write_config(
             {

@@ -119,6 +119,50 @@ class ReadinessTests(unittest.TestCase):
             self.assertNotIn("KUser.test", rendered)
             self.assertNotIn("super-secret", rendered)
 
+    def test_production_readiness_resolves_pms_setup_without_secret_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = Path(tmp) / "workspace" / "skills" / "audit"
+            skill.mkdir(parents=True)
+            config_root = Path(tmp) / "config"
+            config_root.mkdir()
+            (config_root / "CAF15.json").write_text(
+                json.dumps(
+                    {
+                        "property_code": "CAF15",
+                        "status": "ACCESS_VERIFIED",
+                        "timezone": "America/Los_Angeles",
+                        "pms": {
+                            "vendor": "choice_advantage",
+                            "legacy_username": "KUser.private",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = {
+                "KOLO_HOTELS_CONFIG_DIR": str(config_root),
+                "PMS_PASSWORD_CAF15": "super-secret",
+            }
+            with patch(
+                "scripts.readiness.importlib.util.find_spec", return_value=True
+            ), patch(
+                "scripts.readiness.find_chromium", return_value="chromium"
+            ), patch(
+                "scripts.readiness.shutil.which", return_value=None
+            ):
+                results = inspect(skill, env, production_hotel="CAF15")
+            self.assertIn(
+                (
+                    "PASS",
+                    "PMS Setup access",
+                    "CAF15 resolves through mf-hotel-pms-setup (values not displayed)",
+                ),
+                results,
+            )
+            rendered = repr(results)
+            self.assertNotIn("KUser.private", rendered)
+            self.assertNotIn("super-secret", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()
