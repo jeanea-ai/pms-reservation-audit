@@ -267,9 +267,15 @@ def resolve_access(
         raise AccessError("PMS Setup property config has no explicit pms.vendor")
     if vendor not in CHOICE_VENDORS:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
-    auth_mode = str(pms.get("auth_mode") or "").strip().casefold()
-    if auth_mode not in PMS_AUTH_MODES:
-        raise AccessError("PMS Setup pms.auth_mode is missing or unsupported")
+    raw_auth_mode = pms.get("auth_mode")
+    auth_mode = str(raw_auth_mode or "").strip().casefold()
+    if not auth_mode:
+        # PMS Setup intentionally permits older verified Choice records that
+        # predate auth_mode. Consume that established contract in memory; the
+        # reconciliation skill must never migrate or rewrite the shared file.
+        auth_mode = "direct_login_no_mfa"
+    elif auth_mode not in PMS_AUTH_MODES:
+        raise AccessError("PMS Setup pms.auth_mode is unsupported")
 
     environment_password = env.get(f"PMS_PASSWORD_{normalized}") or env.get(
         "PMS_PASSWORD"
