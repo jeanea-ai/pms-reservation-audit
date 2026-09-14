@@ -39,6 +39,7 @@ except ModuleNotFoundError:
 
 
 CONNECT_URL = "https://connect.choicehotels.com/login"
+CONNECT_HOME_URL = "https://connect.choicehotels.com/"
 OKTA_HOST = "choicehotels.okta.com"
 CONNECT_HOST = "connect.choicehotels.com"
 ADVANTAGE_HOST = "www.choiceadvantage.com"
@@ -85,6 +86,14 @@ def _is_exact_host(url: object, expected: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def _is_okta_auth_url(url: object) -> bool:
+    """Return true for an Okta authentication document, not cleanup helpers."""
+    if not _is_exact_host(url, OKTA_HOST):
+        return False
+    path = urlparse(str(url or "")).path.casefold()
+    return not any(marker in path for marker in ("signout", "sign-out", "sign_out"))
 
 
 def _navigation_state(url: object) -> str:
@@ -159,7 +168,7 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
     # A top-level exact Okta document is authoritative. Okta may legitimately
     # embed a same-origin helper/signout iframe inside that page; it is not a
     # second login session and must not make the surface ambiguous.
-    if _is_exact_host(root_url, OKTA_HOST):
+    if _is_okta_auth_url(root_url):
         return OktaSurface("top", root_url, frame_id=root_id)
     candidates: list[OktaSurface] = []
 
@@ -167,7 +176,7 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
     for item in session.attached_targets():
         info = item.get("target_info") or {}
         url = str(info.get("url") or "")
-        if info.get("type") in {"iframe", "page"} and _is_exact_host(url, OKTA_HOST):
+        if info.get("type") in {"iframe", "page"} and _is_okta_auth_url(url):
             attached.append(
                 OktaSurface(
                     "oopif",
@@ -182,7 +191,7 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
     for frame in frames:
         url = str(frame.get("url") or "")
         frame_id = str(frame.get("id") or "")
-        if not _is_exact_host(url, OKTA_HOST) or frame_id in attached_ids:
+        if not _is_okta_auth_url(url) or frame_id in attached_ids:
             continue
         try:
             context = session.call(
@@ -369,6 +378,8 @@ def _follow_choice_app_launch(
     seen_targets = set(before_targets)
     last_transition = None
     stable_unapproved = 0
+    stable_connect_login = 0
+    connect_recovery_attempted = False
     reported_unapproved_targets: set[str] = set()
     while time.monotonic() < deadline:
         current = _snapshot(session)
@@ -382,19 +393,25 @@ def _follow_choice_app_launch(
             last_transition = signature
         if current_state == "choiceadvantage":
             return session
-        if (
+        has_choice_app = (
             accept_connect_dashboard
             and current_state == "choice_connect"
             and _has_choice_advantage_app(session)
-        ):
+        )
+        if has_choice_app:
             return session
         stable_unapproved = (
             stable_unapproved + 1 if current_state == "unapproved" else 0
         )
-        if stable_unapproved >= 4:
-            raise OktaLoginError(
-                "Choice app launch reached a stable unapproved destination"
-            )
+        current_path = str(urlparse(str(current_url or "")).path or "").casefold()
+        stable_connect_login = (
+            stable_connect_login + 1
+            if accept_connect_dashboard
+            and current_state == "choice_connect"
+            and current_path.rstrip("/") == "/login"
+            and not has_choice_app
+            else 0
+        )
 
         new_pages = [
             item
@@ -450,6 +467,40 @@ def _follow_choice_app_launch(
             session.call("Page.enable")
             session.call("Runtime.enable")
             continue
+        # Some Choice SSO responses finish in an Okta signout helper iframe
+        # while the top-level Connect document remains the inert /login shell.
+        # Resolve the already-established Connect session once via its canonical
+        # home URL. This is not an authentication retry and never guesses an
+        # appLinks URL.
+        if stable_connect_login >= 4:
+            if connect_recovery_attempted:
+                _record_transition(
+                    recorder,
+                    "connect_session_not_established",
+                    current_url,
+                    state="choice_connect",
+                )
+                raise OktaLoginError(
+                    "Choice Connect returned to login after Okta authentication"
+                )
+            connect_recovery_attempted = True
+            stable_connect_login = 0
+            _record_transition(
+                recorder,
+                "connect_session_resolution_started",
+                CONNECT_HOME_URL,
+                state="choice_connect",
+            )
+            session.navigate(CONNECT_HOME_URL)
+            _wait_for_settle(
+                session,
+                timeout=min(10, max(1, deadline - time.monotonic())),
+            )
+            continue
+        if stable_unapproved >= 4:
+            raise OktaLoginError(
+                "Choice app launch reached a stable unapproved destination"
+            )
         time.sleep(0.25)
     if accept_connect_dashboard:
         raise OktaLoginError("Okta did not return to an approved Choice destination")
