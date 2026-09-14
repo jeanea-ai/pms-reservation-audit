@@ -102,8 +102,9 @@ exact-origin `choicehotels.okta.com` DOM surface. It may be the top-level page,
 a same-process iframe (use an isolated execution context for its frame), or an
 out-of-process iframe (use its flattened attached CDP session). Refuse multiple
 independent child surfaces and lookalike hosts, but treat an exact top-level
-Okta page as authoritative when it embeds a same-origin helper/signout iframe.
-Never use coordinate/OCR fallbacks.
+Okta page as authoritative when it embeds a same-origin helper iframe. A
+same-origin signout helper iframe is cleanup state, not an authentication
+surface. Never use coordinate/OCR fallbacks.
 
 Populate the username/password fields in memory and follow exact Okta controls.
 Select **Verify with your phone**, record the request time immediately before
@@ -119,6 +120,10 @@ ambiguous code, or timeout fails closed without resending SMS.
 
 After verification, accept Choice Connect and the approved appLinks host as
 transient states, and only ChoiceADVANTAGE as the final PMS destination.
+If the callback leaves the top-level page on Choice Connect's inert `/login`
+shell, resolve the already-established session through the canonical Choice
+Connect home URL once. Do not resubmit credentials or request another SMS; if
+the browser returns to `/login`, fail with the specific post-Okta login error.
 If an existing SSO session bypasses credential entry, require the displayed
 Choice Connect identity to match the configured or gateway-resolved operations
 email. Select the exact
