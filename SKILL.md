@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.6.2"
+version: "0.6.3"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.6.2"
+  version: "0.6.3"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -34,14 +34,17 @@ It must report `source: mf-hotel-pms-setup`, `test_only: false`, and presence
 only for username/password. Production audits then use the normal command with
 no `--test-access`, `--test-access-file`, `--session-only`,
 `--browser-saved-login`, or `--allow-skip-mfa` flags. The deterministic resolver
-reads the property code, timezone, vendor, and explicit authentication mode
-from PMS Setup, then resolves the password from its established protected
+reads the property code, timezone, vendor, and authentication mode from PMS
+Setup, then resolves the password from its established protected
 environment or `.secrets.json` path without displaying any value.
 
 Both Choice access modes are supported and selected only from PMS Setup:
 
 - `pms.auth_mode: direct_login_no_mfa` uses `pms.legacy_username` and the
   established PMS password resolver.
+- A verified legacy Choice record that predates `pms.auth_mode` is consumed
+  in memory as `direct_login_no_mfa`. Never write that default back to PMS
+  Setup. An explicit unknown mode still fails closed.
 - `pms.auth_mode: okta_sso` consumes either the richer documented identity
   contract or the deployed PMS Setup 3.0 Choice contract without changing it.
   When matching `pms.username` and `identity.ops_email` fields exist, they and
@@ -67,14 +70,19 @@ Okta DOM discovery supports a top-level page, a same-process iframe, or an
 out-of-process iframe through flattened CDP target attachment. Accept only the
 exact `choicehotels.okta.com` origin. An exact top-level Okta document is
 authoritative even when it contains a same-origin helper iframe; when the
-top-level page is ChoiceConnect, require exactly one matching Okta frame. Never
+top-level page is ChoiceConnect, require exactly one matching Okta authentication
+frame and ignore an Okta signout helper iframe. Never
 fall back to coordinates, screenshots, OCR, or an approximate/foreign origin.
 
 After authentication, permit `connect.choicehotels.com`,
 `choicehotels.okta.com`, and `apps.choicecentral.com` only as transient SSO
 states. Follow a same-tab or uniquely created appLinks page target until the
 final exact `www.choiceadvantage.com` destination. A stable destination outside
-that allow-list fails closed. The command records timestamped origin, path,
+that allow-list fails closed. If the callback leaves the top-level page on the
+inert Choice Connect `/login` shell, resolve the established session exactly
+once through the canonical Choice Connect home URL, then fail with a specific
+error if it returns to login. This is not an authentication or SMS retry. The
+command records timestamped origin, path,
 state, redacted path category, and cleanup events in `auth-transitions.jsonl`; it never records query
 strings, titles, page bodies, credentials, cookies, or OTPs.
 
