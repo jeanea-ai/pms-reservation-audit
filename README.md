@@ -41,7 +41,9 @@ chat summary:
   with both the richer identity contract and deployed PMS Setup 3.0 Choice
   records. Missing richer identity fields are resolved from the bound Gmail
   profile at runtime; shared setup files are never rewritten. Okta supports
-  top-level, same-process iframe, and OOPIF DOM surfaces;
+  an authoritative top-level page plus expected helper frames, same-process
+  iframe and OOPIF login surfaces, and the approved
+  `apps.choicecentral.com/appLinks` transition;
   it requests one SMS and reads a fresh Google Voice-forwarded code through the
   property Gmail binding without storing or printing the OTP.
 - **Testable before full setup** — an explicitly gated standalone test mode can
@@ -62,6 +64,10 @@ chat summary:
   individual 90-second waits and retries cannot multiply beyond that deadline.
   Scheduled commands use an explicit eight-minute audit budget inside a
   fifteen-minute job budget.
+- **Auditable authentication** — creates the run directory before login and
+  records a redacted origin/path transition journal without URL queries,
+  credentials, page contents, or OTPs. PMS Setup source files are byte-attested
+  and rechecked without being modified.
 
 ## Usage
 

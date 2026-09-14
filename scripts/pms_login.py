@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -108,7 +109,9 @@ class CdpSession:
                     self._record_event(message)
                 continue
             if "error" in message:
-                raise LoginError(f"browser command failed: {message['error'].get('message', 'unknown error')}")
+                raise LoginError(
+                    f"browser command failed: {message['error'].get('message', 'unknown error')}"
+                )
             return message.get("result", {})
 
     def clear_events(self) -> None:
@@ -167,6 +170,7 @@ class CdpSession:
     def attached_targets(self) -> list[dict]:
         return list(self._attached_targets.values())
 
+
 def _select_page_target(pages: list[dict]) -> dict:
     def priority(target: dict) -> int:
         raw_url = str(target.get("url") or "")
@@ -189,7 +193,9 @@ def _select_page_target(pages: list[dict]) -> dict:
     if best_priority > 0:
         matches = [target for target in pages if priority(target) == best_priority]
     else:
-        raise NoChoiceTarget("the persistent browser has no exact ChoiceADVANTAGE target")
+        raise NoChoiceTarget(
+            "the persistent browser has no exact ChoiceADVANTAGE target"
+        )
     if len(matches) != 1:
         raise LoginError(
             "the persistent browser has multiple equally valid ChoiceADVANTAGE targets"
@@ -199,7 +205,9 @@ def _select_page_target(pages: list[dict]) -> dict:
 
 def _list_page_targets(cdp_url: str) -> list[dict]:
     try:
-        with urllib.request.urlopen(f"{cdp_url.rstrip('/')}/json", timeout=5) as response:
+        with urllib.request.urlopen(
+            f"{cdp_url.rstrip('/')}/json", timeout=5
+        ) as response:
             targets = json.loads(response.read())
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise LoginError("the persistent browser CDP endpoint is unavailable") from exc
@@ -219,10 +227,14 @@ def _create_page_target(cdp_url: str, url: str) -> dict:
         with urllib.request.urlopen(request, timeout=5) as response:
             target = json.loads(response.read())
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise LoginError("the persistent browser could not create a dedicated page") from exc
+        raise LoginError(
+            "the persistent browser could not create a dedicated page"
+        ) from exc
     websocket_url = target.get("webSocketDebuggerUrl")
     if not isinstance(websocket_url, str) or not websocket_url:
-        raise LoginError("the persistent browser created a page without a CDP websocket")
+        raise LoginError(
+            "the persistent browser created a page without a CDP websocket"
+        )
     return target
 
 
@@ -236,8 +248,9 @@ def _page_websocket(cdp_url: str) -> str:
 
 
 def _snapshot(session: CdpSession) -> dict:
-    return session.evaluate(
-        """(() => ({
+    return (
+        session.evaluate(
+            """(() => ({
           url: location.href,
           title: document.title || '',
           body: (document.body?.innerText || '').slice(0, 12000),
@@ -252,7 +265,9 @@ def _snapshot(session: CdpSession) -> dict:
             ['Guest Ledger', 'Future Reservations', 'Future Reservation Report']
               .includes((a.textContent || '').trim()))
         }))()"""
-    ) or {}
+        )
+        or {}
+    )
 
 
 def _snapshot_signature(snapshot: dict) -> tuple:
@@ -427,9 +442,10 @@ def _finish_login(
     allow_skip_mfa: bool,
 ) -> dict[str, object]:
     # This is the account-migration deferral, not the temporary MFA skip.
-    if _has_traditional_login_continue(session) and "migrat" in str(
-        snapshot.get("body", "")
-    ).casefold():
+    if (
+        _has_traditional_login_continue(session)
+        and "migrat" in str(snapshot.get("body", "")).casefold()
+    ):
         before_click = snapshot
         _click_traditional_login_continue(session)
         snapshot = _wait_for_settle(session, changed_from=before_click)
@@ -475,9 +491,7 @@ def login_with_browser_saved_access(
     interaction_delay: float = DEFAULT_INTERACTION_DELAY,
 ) -> dict[str, object]:
     """Login by clicking already-autofilled browser fields without reading them."""
-    session = CdpSession(
-        _page_websocket(cdp_url), interaction_delay=interaction_delay
-    )
+    session = CdpSession(_page_websocket(cdp_url), interaction_delay=interaction_delay)
     try:
         session.call("Page.enable")
         session.navigate(REPORTS_URL)
@@ -524,6 +538,7 @@ def login(
     cdp_url: str = DEFAULT_CDP_URL,
     allow_skip_mfa: bool = False,
     interaction_delay: float = DEFAULT_INTERACTION_DELAY,
+    transition_recorder: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     auth_mode = str(access.get("auth_mode") or "direct_login_no_mfa")
     if auth_mode == "okta_sso":
@@ -537,18 +552,21 @@ def login(
             access,
             cdp_url=cdp_url,
             interaction_delay=interaction_delay,
+            transition_recorder=transition_recorder,
         )
     if auth_mode != "direct_login_no_mfa":
         raise LoginError("unsupported PMS authentication mode")
-    session = CdpSession(
-        _page_websocket(cdp_url), interaction_delay=interaction_delay
-    )
+    session = CdpSession(_page_websocket(cdp_url), interaction_delay=interaction_delay)
     try:
         session.call("Page.enable")
         session.navigate(REPORTS_URL)
         snapshot = _wait_for_settle(session)
         if _is_authenticated(snapshot):
-            return {"status": "authenticated", "session_reused": True, "mfa_skipped": False}
+            return {
+                "status": "authenticated",
+                "session_reused": True,
+                "mfa_skipped": False,
+            }
 
         session.navigate(SIGN_IN_URL)
         snapshot = _wait_for_settle(session)

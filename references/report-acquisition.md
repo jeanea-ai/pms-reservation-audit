@@ -24,7 +24,9 @@ Read `kolo-hotels/config/<CODE>.json`, which is created and owned by
 Never print credentials, password references, OTPs, or report keys. If the
 property config is absent, the PMS block is incomplete, or access is not
 verified, ask the operator to finish PMS Setup; do not repair setup from this
-skill.
+skill. Never back up, copy, rewrite, normalize, or restore a PMS Setup file as
+part of an audit. The command records and rechecks byte attestations for every
+PMS Setup source it consumes.
 
 Run `python3 scripts/pms_access.py --hotel <CODE>` for a non-secret preflight.
 It reports only whether the established access fields resolve. Browser login
@@ -99,7 +101,9 @@ Choice Connect tab and select the exact **Connect Now** control. Discover one
 exact-origin `choicehotels.okta.com` DOM surface. It may be the top-level page,
 a same-process iframe (use an isolated execution context for its frame), or an
 out-of-process iframe (use its flattened attached CDP session). Refuse multiple
-surfaces, lookalike hosts, and coordinate/OCR fallbacks.
+independent child surfaces and lookalike hosts, but treat an exact top-level
+Okta page as authoritative when it embeds a same-origin helper/signout iframe.
+Never use coordinate/OCR fallbacks.
 
 Populate the username/password fields in memory and follow exact Okta controls.
 Select **Verify with your phone**, record the request time immediately before
@@ -113,7 +117,8 @@ message. Never save or print message bodies, credentials, or the OTP. A
 transient read may retry once, but an authentication error, mailbox mismatch,
 ambiguous code, or timeout fails closed without resending SMS.
 
-After verification, accept only Choice Connect or ChoiceADVANTAGE destinations.
+After verification, accept Choice Connect and the approved appLinks host as
+transient states, and only ChoiceADVANTAGE as the final PMS destination.
 If an existing SSO session bypasses credential entry, require the displayed
 Choice Connect identity to match the configured or gateway-resolved operations
 email. Select the exact
@@ -121,6 +126,16 @@ email. Select the exact
 acquisition. The live selector and post-auth route require one controlled test
 by the developer who has the Okta-enabled account; update selectors from
 sanitized DOM metadata only, never from credentials or message bodies.
+
+The Choice Advantage launch may open an intermediate
+`https://apps.choicecentral.com/appLinks/...` page in the same tab or one new
+page target. Treat that exact HTTPS host as a transient state, attach to one
+unambiguous new approved target, and follow it to the final exact
+`www.choiceadvantage.com` host. Do not navigate directly to a guessed appLinks
+URL, and never treat appLinks as successful authentication. A stable unknown
+destination fails closed. `auth-transitions.jsonl` records only UTC timestamp,
+event, HTTPS origin, path, and fixed state metadata; query strings and page
+contents are excluded.
 
 An on-demand audit has a four-minute overall deadline by default. Individual
 page/report waits are capped by both their own timeout and the remaining overall

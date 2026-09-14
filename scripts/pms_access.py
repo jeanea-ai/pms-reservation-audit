@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import date
 import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -86,6 +87,51 @@ def _read_protected_json(path: Path, label: str) -> dict:
     return value
 
 
+def _source_digest(path: Path, label: str) -> dict[str, object]:
+    """Attest one regular source file without following symlinks."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    try:
+        if path.is_symlink():
+            raise AccessError(f"{label} must not be a symbolic link")
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise AccessError(f"{label} must be a regular file")
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 65536):
+            digest.update(chunk)
+        return {
+            "path": str(path),
+            "sha256": digest.hexdigest(),
+            "size": metadata.st_size,
+        }
+    except FileNotFoundError as exc:
+        raise AccessError(f"{label} is missing: {path}") from exc
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise AccessError(f"{label} must not be a symbolic link") from exc
+        raise AccessError(f"{label} is inaccessible") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def verify_source_attestation(access: dict[str, object]) -> None:
+    """Fail if a PMS Setup source changed after this process resolved it."""
+    records = access.get("_source_attestation") or []
+    if not isinstance(records, list):
+        raise AccessError("PMS Setup source attestation is invalid")
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise AccessError("PMS Setup source attestation is invalid")
+        current = _source_digest(Path(record["path"]), "PMS Setup source file")
+        if current["sha256"] != record.get("sha256") or current["size"] != record.get(
+            "size"
+        ):
+            raise AccessError("PMS Setup source changed during the audit")
+
+
 def _validated_timezone(value: object) -> str:
     timezone = value.strip() if isinstance(value, str) else ""
     if not timezone:
@@ -128,14 +174,18 @@ def _standalone_test_access(
     if configured_file:
         try:
             if configured_file.is_symlink():
-                raise AccessError("standalone test access file must not be a symbolic link")
+                raise AccessError(
+                    "standalone test access file must not be a symbolic link"
+                )
             mode = stat.S_IMODE(configured_file.stat().st_mode)
         except FileNotFoundError as exc:
             raise AccessError("standalone test access file is missing") from exc
         except OSError as exc:
             raise AccessError("standalone test access file is inaccessible") from exc
         if mode & 0o077:
-            raise AccessError("standalone test access file must be owner-only (chmod 600)")
+            raise AccessError(
+                "standalone test access file must be owner-only (chmod 600)"
+            )
         payload = _read_json(configured_file, "standalone test access file")
     else:
         missing = [
@@ -185,7 +235,9 @@ def resolve_access(
     env = os.environ if environ is None else environ
     normalized = (code or "").strip().upper()
     if not CODE_RE.fullmatch(normalized):
-        raise AccessError("hotel code must be 2-24 letters, digits, dash, or underscore")
+        raise AccessError(
+            "hotel code must be 2-24 letters, digits, dash, or underscore"
+        )
     if allow_test_access:
         access = _standalone_test_access(normalized, env, test_access_file)
         access["auth_mode"] = "direct_login_no_mfa"
@@ -197,7 +249,8 @@ def resolve_access(
             os.path.expanduser("~/.openclaw/workspace-main/kolo-hotels/config"),
         )
     )
-    config = _read_json(root / f"{normalized}.json", "PMS Setup property config")
+    config_path = root / f"{normalized}.json"
+    config = _read_json(config_path, "PMS Setup property config")
     configured_code = str(config.get("property_code") or normalized).strip().upper()
     if configured_code != normalized:
         raise AccessError("PMS Setup property config does not match --hotel")
@@ -264,9 +317,10 @@ def resolve_access(
                 raise AccessError("Okta username does not match identity.ops_email")
             if identity.get("ops_email_connected") is not True:
                 raise AccessError("Okta operations Gmail is not marked connected")
-            if not isinstance(identity.get("gv_number"), str) or not identity[
-                "gv_number"
-            ].strip():
+            if (
+                not isinstance(identity.get("gv_number"), str)
+                or not identity["gv_number"].strip()
+            ):
                 raise AccessError(
                     "Okta access requires a dedicated Google Voice number"
                 )
@@ -312,6 +366,11 @@ def resolve_access(
             "Choice password is not resolvable from the established secret paths"
         )
     timezone = _validated_timezone(config.get("timezone"))
+    source_attestation = [_source_digest(config_path, "PMS Setup property config")]
+    if not environment_password and secrets_path.exists():
+        source_attestation.append(
+            _source_digest(secrets_path, "PMS Setup secrets file")
+        )
 
     return {
         "property_code": normalized,
@@ -324,6 +383,7 @@ def resolve_access(
         "ops_email": ops_email_value,
         "source": "mf-hotel-pms-setup",
         "test_only": False,
+        "_source_attestation": source_attestation,
     }
 
 

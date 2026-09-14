@@ -16,7 +16,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 try:
     from scripts.audit_pipeline import build_report_spec
     from scripts.audit_report import render_pdf_atomic
-    from scripts.pms_access import AccessError, CODE_RE, resolve_access
+    from scripts.pms_access import (
+        AccessError,
+        CODE_RE,
+        resolve_access,
+        verify_source_attestation,
+    )
     from scripts.pms_login import (
         BrowserChallenge,
         CdpSession,
@@ -33,7 +38,12 @@ try:
 except ModuleNotFoundError:
     from audit_pipeline import build_report_spec
     from audit_report import render_pdf_atomic
-    from pms_access import AccessError, CODE_RE, resolve_access
+    from pms_access import (
+        AccessError,
+        CODE_RE,
+        resolve_access,
+        verify_source_attestation,
+    )
     from pms_login import (
         BrowserChallenge,
         CdpSession,
@@ -58,6 +68,13 @@ def _atomic_json(path: Path, payload: dict) -> None:
         handle.write("\n")
         temporary = Path(handle.name)
     temporary.replace(path)
+
+
+def _append_jsonl(path: Path, payload: dict) -> None:
+    """Append one already-redacted diagnostic event to the run directory."""
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        handle.write("\n")
 
 
 def _new_run_dir(root: Path, now: datetime) -> Path:
@@ -101,7 +118,8 @@ def _failure(
     payload = {
         "status": "failed",
         "error": error,
-        "next_question": next_question or (
+        "next_question": next_question
+        or (
             "The bounded audit stopped without retrying indefinitely. Should I preserve "
             "this run for diagnosis and try one new bounded run later?"
         ),
@@ -219,6 +237,7 @@ def main() -> int:
     run_dir = None
     session = None
     run_lock = None
+    access = None
     overall_deadline = time.monotonic() + args.overall_timeout_seconds
     terminated = False
     current_stage = "starting"
@@ -231,33 +250,14 @@ def main() -> int:
         signal.setitimer(signal.ITIMER_REAL, args.overall_timeout_seconds)
     try:
         run_lock = _acquire_run_lock(args.output_root, args.hotel)
-        access = None
         timezone_name = args.timezone
-        if args.browser_saved_login:
-            login_result = login_with_browser_saved_access(
-                cdp_url=args.cdp_url,
-                allow_skip_mfa=args.allow_skip_mfa,
-                interaction_delay=args.interaction_delay_seconds,
-            )
-            if login_result["status"] != "authenticated":
-                print(json.dumps(login_result, sort_keys=True))
-                return 3
-        elif not args.session_only:
+        if not args.session_only and not args.browser_saved_login:
             access = resolve_access(
                 args.hotel,
                 allow_test_access=args.test_access,
                 test_access_file=args.test_access_file,
             )
             timezone_name = str(access["timezone"])
-            login_result = login(
-                access,
-                cdp_url=args.cdp_url,
-                allow_skip_mfa=args.allow_skip_mfa,
-                interaction_delay=args.interaction_delay_seconds,
-            )
-            if login_result["status"] != "authenticated":
-                print(json.dumps(login_result, sort_keys=True))
-                return 3
         try:
             timezone = ZoneInfo(str(timezone_name))
         except ZoneInfoNotFoundError as exc:
@@ -267,6 +267,58 @@ def main() -> int:
         run_dir = _new_run_dir(args.output_root, now)
         state_file = run_dir / "capture-state.json"
         status_file = run_dir / "run-status.json"
+        transition_file = run_dir / "auth-transitions.jsonl"
+        current_stage = "authenticating"
+        _atomic_json(
+            status_file,
+            {
+                "status": "running",
+                "stage": current_stage,
+                "property_code": args.hotel.upper(),
+            },
+        )
+
+        def transition_recorder(event: dict) -> None:
+            _append_jsonl(transition_file, event)
+
+        if args.browser_saved_login:
+            login_result = login_with_browser_saved_access(
+                cdp_url=args.cdp_url,
+                allow_skip_mfa=args.allow_skip_mfa,
+                interaction_delay=args.interaction_delay_seconds,
+            )
+            if login_result["status"] != "authenticated":
+                _atomic_json(
+                    status_file,
+                    {
+                        "status": "failed",
+                        "stage": "authentication_incomplete",
+                        "property_code": args.hotel.upper(),
+                    },
+                )
+                print(json.dumps(login_result, sort_keys=True))
+                return 3
+        elif not args.session_only:
+            login_result = login(
+                access,
+                cdp_url=args.cdp_url,
+                allow_skip_mfa=args.allow_skip_mfa,
+                interaction_delay=args.interaction_delay_seconds,
+                transition_recorder=transition_recorder,
+            )
+            if login_result["status"] != "authenticated":
+                _atomic_json(
+                    status_file,
+                    {
+                        "status": "failed",
+                        "stage": "authentication_incomplete",
+                        "property_code": args.hotel.upper(),
+                    },
+                )
+                print(json.dumps(login_result, sort_keys=True))
+                return 3
+            if not access["test_only"]:
+                verify_source_attestation(access)
         current_stage = "opening_browser"
         _atomic_json(
             status_file,
@@ -334,7 +386,9 @@ def main() -> int:
             },
         )
         payload = build_audit_input(
-            guest_ledger_text=read_report_text(str(guest_path)) if guest_path.exists() else None,
+            guest_ledger_text=(
+                read_report_text(str(guest_path)) if guest_path.exists() else None
+            ),
             future_reservation_texts=(
                 [read_report_text(str(future_path))] if future_path.exists() else []
             ),
@@ -352,7 +406,15 @@ def main() -> int:
         spec_path = run_dir / "report-spec.json"
         _atomic_json(spec_path, spec)
         report_path = run_dir / f"PMS Reconciliation {args.hotel.upper()}.pdf"
+        if access is not None and not access["test_only"]:
+            verify_source_attestation(access)
         render_pdf_atomic(spec, report_path)
+        if access is not None and not access["test_only"]:
+            try:
+                verify_source_attestation(access)
+            except AccessError:
+                report_path.unlink(missing_ok=True)
+                raise
         result = {
             "status": "ok",
             "complete": payload["complete"],
@@ -429,6 +491,16 @@ def main() -> int:
         print(json.dumps(result, sort_keys=True), flush=True)
         return 124
     except BrowserChallenge as exc:
+        if run_dir is not None:
+            _atomic_json(
+                run_dir / "run-status.json",
+                {
+                    "status": "failed",
+                    "stage": "bot_challenge",
+                    "last_stage": current_stage,
+                    "property_code": args.hotel.upper(),
+                },
+            )
         print(
             json.dumps(
                 _failure(
@@ -452,7 +524,26 @@ def main() -> int:
         RuntimeError,
         ValueError,
     ) as exc:
-        print(json.dumps(_failure(str(exc), run_dir), sort_keys=True))
+        error_message = str(exc)
+        if access is not None and not access.get("test_only"):
+            try:
+                verify_source_attestation(access)
+            except AccessError as attestation_error:
+                error_message = str(attestation_error)
+        if run_dir is not None:
+            try:
+                _atomic_json(
+                    run_dir / "run-status.json",
+                    {
+                        "status": "failed",
+                        "stage": "failed",
+                        "last_stage": current_stage,
+                        "property_code": args.hotel.upper(),
+                    },
+                )
+            except OSError:
+                pass
+        print(json.dumps(_failure(error_message, run_dir), sort_keys=True))
         return 2
     finally:
         if alarm_supported:

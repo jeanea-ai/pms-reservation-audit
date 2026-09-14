@@ -34,11 +34,17 @@ PMS Setup selects the authentication branch.
 - Readiness reports `PMS Setup access` and `Okta Gmail gateway` as PASS without
   displaying values.
 - A dedicated Choice Connect tab opens.
+- An exact top-level Okta page remains authoritative if it contains an Okta
+  helper iframe.
 - Exactly one SMS is requested.
 - The configured Gmail mailbox is identity-checked before message bodies are
   read.
 - The run reaches the normal ChoiceADVANTAGE report menu, acquires both source
   PDFs, and produces a structurally verified reconciliation PDF.
+- Any `apps.choicecentral.com/appLinks` hop is followed as a transient state,
+  and `auth-transitions.jsonl` shows cleanup only after the final observed page
+  state. URL queries and page contents are absent.
+- PMS Setup property and secrets source attestations remain unchanged.
 - Chat output remains aggregate-only; credentials, OTPs, guest rows, and email
   bodies do not appear.
 

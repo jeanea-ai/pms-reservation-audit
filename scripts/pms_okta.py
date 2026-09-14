@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import time
 from urllib.parse import urlparse
@@ -40,7 +42,9 @@ CONNECT_URL = "https://connect.choicehotels.com/login"
 OKTA_HOST = "choicehotels.okta.com"
 CONNECT_HOST = "connect.choicehotels.com"
 ADVANTAGE_HOST = "www.choiceadvantage.com"
+APPS_HOST = "apps.choicecentral.com"
 DEFAULT_LOGIN_TIMEOUT = 180.0
+TransitionRecorder = Callable[[dict[str, object]], None]
 
 
 class OktaLoginError(LoginError):
@@ -83,6 +87,58 @@ def _is_exact_host(url: object, expected: str) -> bool:
         return False
 
 
+def _navigation_state(url: object) -> str:
+    raw = str(url or "")
+    if raw in {"", "about:blank"}:
+        return "loading"
+    if _is_exact_host(raw, ADVANTAGE_HOST):
+        return "choiceadvantage"
+    if _is_exact_host(raw, CONNECT_HOST):
+        return "choice_connect"
+    if _is_exact_host(raw, OKTA_HOST):
+        return "okta"
+    if _is_exact_host(raw, APPS_HOST):
+        return "choice_app_link"
+    return "unapproved"
+
+
+def _redacted_path(url: object) -> str:
+    path = urlparse(str(url or "")).path.casefold()
+    if "applink" in path:
+        return "/appLinks/…"
+    if "signout" in path or "sign-out" in path or "sign_out" in path:
+        return "/signout/…"
+    if "reportviewstart.init" in path:
+        return "/…/ReportViewStart.init"
+    for marker in ("verify", "signin", "login", "dashboard"):
+        if marker in path:
+            return f"/{marker}/…"
+    return "/" if path in {"", "/"} else "/<redacted>"
+
+
+def _record_transition(
+    recorder: TransitionRecorder | None,
+    event: str,
+    url: object = None,
+    **details: object,
+) -> None:
+    if recorder is None:
+        return
+    parsed = urlparse(str(url or ""))
+    payload: dict[str, object] = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+    }
+    if parsed.scheme == "https" and parsed.hostname:
+        payload["origin"] = f"https://{parsed.hostname.casefold()}"
+        payload["path"] = _redacted_path(url)
+    elif str(url or "") == "about:blank":
+        payload["origin"] = "about:blank"
+        payload["path"] = ""
+    payload.update(details)
+    recorder(payload)
+
+
 def _flatten_frame_tree(node: dict) -> list[dict]:
     frames = []
     frame = node.get("frame")
@@ -99,6 +155,12 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
     tree = session.call("Page.getFrameTree").get("frameTree") or {}
     frames = _flatten_frame_tree(tree)
     root_id = str((tree.get("frame") or {}).get("id") or "")
+    root_url = str((tree.get("frame") or {}).get("url") or "")
+    # A top-level exact Okta document is authoritative. Okta may legitimately
+    # embed a same-origin helper/signout iframe inside that page; it is not a
+    # second login session and must not make the surface ambiguous.
+    if _is_exact_host(root_url, OKTA_HOST):
+        return OktaSurface("top", root_url, frame_id=root_id)
     candidates: list[OktaSurface] = []
 
     attached = []
@@ -122,13 +184,14 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
         frame_id = str(frame.get("id") or "")
         if not _is_exact_host(url, OKTA_HOST) or frame_id in attached_ids:
             continue
-        if frame_id == root_id:
-            candidates.append(OktaSurface("top", url, frame_id=frame_id))
-            continue
         try:
             context = session.call(
                 "Page.createIsolatedWorld",
-                {"frameId": frame_id, "worldName": "pms-okta-audit", "grantUniveralAccess": False},
+                {
+                    "frameId": frame_id,
+                    "worldName": "pms-okta-audit",
+                    "grantUniveralAccess": False,
+                },
             ).get("executionContextId")
         except LoginError:
             continue
@@ -142,14 +205,17 @@ def discover_okta_surface(session: CdpSession) -> OktaSurface | None:
         for item in candidates
     }
     if len(unique) > 1:
-        raise OktaLoginError("multiple exact-origin Okta authentication surfaces were found")
+        raise OktaLoginError(
+            "multiple exact-origin Okta authentication surfaces were found"
+        )
     return next(iter(unique.values()), None)
 
 
 def _surface_snapshot(session: CdpSession, surface: OktaSurface) -> dict:
-    return surface.evaluate(
-        session,
-        """(() => {
+    return (
+        surface.evaluate(
+            session,
+            """(() => {
           const text = node => (node.textContent || node.value || '').trim();
           const controls = [...document.querySelectorAll('button,a,input[type=submit],input[type=button]')]
             .map(text).filter(Boolean).slice(0, 80);
@@ -164,12 +230,16 @@ def _surface_snapshot(session: CdpSession, surface: OktaSurface) -> dict:
             hasOtp: !!document.querySelector(
               'input[autocomplete="one-time-code"],input[name=passCode],input[name=answer],input[name=code]')
           };
-        })()"""
-    ) or {}
+        })()""",
+        )
+        or {}
+    )
 
 
 def _has_label(snapshot: dict, *labels: str) -> bool:
-    available = {str(value).strip().casefold() for value in snapshot.get("controls") or []}
+    available = {
+        str(value).strip().casefold() for value in snapshot.get("controls") or []
+    }
     return any(label.casefold() in available for label in labels)
 
 
@@ -246,22 +316,144 @@ def _looks_like_challenge(snapshot: dict) -> bool:
     )
 
 
-def _wait_for_choice_destination(session: CdpSession, deadline: float) -> str:
+def _has_choice_advantage_app(session: CdpSession) -> bool:
+    return bool(
+        session.evaluate(
+            """(() => [...document.querySelectorAll('button,a,input[type=submit],input[type=button]')]
+              .map(node => (node.textContent || node.value || '').trim().toLowerCase())
+              .some(label => label === 'choice advantage' || label === 'choiceadvantage'))()"""
+        )
+    )
+
+
+def _click_choice_advantage_app(session: CdpSession) -> str:
+    if _top_click_exact(session, "Choice Advantage", "ChoiceADVANTAGE"):
+        return "exact_label"
+    session.pace()
+    clicked = session.evaluate(
+        f"""(() => {{
+          const matches = [...document.querySelectorAll('a[href]')].filter(node => {{
+            try {{
+              const url = new URL(node.href, location.href);
+              return url.protocol === 'https:' &&
+                     url.hostname.toLowerCase() === {json.dumps(APPS_HOST)} &&
+                     url.pathname.toLowerCase().includes('applink');
+            }} catch (_) {{ return false; }}
+          }});
+          if (matches.length !== 1) return false;
+          matches[0].click();
+          return true;
+        }})()""",
+        user_gesture=True,
+    )
+    if not clicked:
+        raise OktaLoginError("Choice Advantage app control was not found")
+    return "app_link"
+
+
+def _target_id(target: dict) -> str:
+    return str(target.get("id") or target.get("targetId") or "")
+
+
+def _follow_choice_app_launch(
+    session: CdpSession,
+    *,
+    cdp_url: str,
+    before_targets: set[str],
+    deadline: float,
+    interaction_delay: float,
+    recorder: TransitionRecorder | None = None,
+    accept_connect_dashboard: bool = False,
+) -> CdpSession:
+    """Follow one same-tab or new-tab approved Choice SSO/appLinks route."""
+    seen_targets = set(before_targets)
+    last_transition = None
+    stable_unapproved = 0
+    reported_unapproved_targets: set[str] = set()
     while time.monotonic() < deadline:
-        snapshot = _snapshot(session)
-        host = _host(snapshot.get("url"))
-        if host == ADVANTAGE_HOST:
-            return host
-        if host == CONNECT_HOST:
-            controls = session.evaluate(
-                """(() => [...document.querySelectorAll('button,a,input[type=submit],input[type=button]')]
-                  .map(node => (node.textContent || node.value || '').trim().toLowerCase())
-                  .some(label => label === 'choice advantage' || label === 'choiceadvantage'))()"""
+        current = _snapshot(session)
+        current_url = current.get("url")
+        current_state = _navigation_state(current_url)
+        signature = (current_state, str(urlparse(str(current_url or "")).path or ""))
+        if signature != last_transition:
+            _record_transition(
+                recorder, "app_launch_transition", current_url, state=current_state
             )
-            if controls:
-                return host
+            last_transition = signature
+        if current_state == "choiceadvantage":
+            return session
+        if (
+            accept_connect_dashboard
+            and current_state == "choice_connect"
+            and _has_choice_advantage_app(session)
+        ):
+            return session
+        stable_unapproved = (
+            stable_unapproved + 1 if current_state == "unapproved" else 0
+        )
+        if stable_unapproved >= 4:
+            raise OktaLoginError(
+                "Choice app launch reached a stable unapproved destination"
+            )
+
+        new_pages = [
+            item
+            for item in _list_page_targets(cdp_url)
+            if _target_id(item) and _target_id(item) not in seen_targets
+        ]
+        for item in new_pages:
+            target_id = _target_id(item)
+            if (
+                _navigation_state(item.get("url")) == "unapproved"
+                and target_id not in reported_unapproved_targets
+            ):
+                # Do not attach to or fail because of an unrelated browser tab.
+                # Record its redacted presence once; only the active route can
+                # become a stable unapproved final destination.
+                reported_unapproved_targets.add(target_id)
+                _record_transition(
+                    recorder,
+                    "unapproved_target_ignored",
+                    item.get("url"),
+                    state="unapproved",
+                )
+        ranked = {
+            "choiceadvantage": 4,
+            "choice_app_link": 3,
+            "choice_connect": 2,
+            "okta": 1,
+        }
+        approved = [
+            (ranked.get(_navigation_state(item.get("url")), 0), item)
+            for item in new_pages
+            if ranked.get(_navigation_state(item.get("url")), 0)
+        ]
+        if approved:
+            best_rank = max(rank for rank, _item in approved)
+            best = [item for rank, item in approved if rank == best_rank]
+            if len(best) != 1:
+                raise OktaLoginError(
+                    "Choice app launch opened ambiguous approved targets"
+                )
+            target = best[0]
+            seen_targets.add(_target_id(target))
+            _record_transition(
+                recorder,
+                "app_target_selected",
+                target.get("url"),
+                state=_navigation_state(target.get("url")),
+            )
+            session.close()
+            session = CdpSession(
+                target["webSocketDebuggerUrl"], interaction_delay=interaction_delay
+            )
+            session.call("Page.enable")
+            session.call("Runtime.enable")
+            continue
         time.sleep(0.25)
-    raise OktaLoginError("Okta did not return to an approved Choice destination")
+    if accept_connect_dashboard:
+        raise OktaLoginError("Okta did not return to an approved Choice destination")
+    raise OktaLoginError("Choice Advantage app did not open")
 
 
 def login_okta(
@@ -271,6 +463,7 @@ def login_okta(
     interaction_delay: float,
     timeout: float = DEFAULT_LOGIN_TIMEOUT,
     otp_reader: GmailOtpReader | None = None,
+    transition_recorder: TransitionRecorder | None = None,
 ) -> dict[str, object]:
     """Authenticate through Okta using one bounded SMS request and a fresh Gmail OTP."""
     if access.get("okta_mfa") not in {"gv_sms", "email"}:
@@ -298,6 +491,8 @@ def login_okta(
             raise OktaLoginError("connected Gmail mailbox does not match Okta username")
         ops_email = username
     target = _create_page_target(cdp_url, CONNECT_URL)
+    _record_transition(transition_recorder, "login_target_created", CONNECT_URL)
+    sso_targets = {_target_id(item) for item in _list_page_targets(cdp_url)}
     session = CdpSession(
         target["webSocketDebuggerUrl"], interaction_delay=interaction_delay
     )
@@ -312,13 +507,20 @@ def login_okta(
         )
         session.navigate(CONNECT_URL)
         _wait_for_settle(session, timeout=min(20, max(1, deadline - time.monotonic())))
+        _record_transition(transition_recorder, "choice_connect_loaded", CONNECT_URL)
         if not _top_click_exact(session, "Connect Now"):
             # An active SSO session may already have reached the dashboard.
             destination = _host((_snapshot(session) or {}).get("url"))
             if destination != CONNECT_HOST:
                 raise OktaLoginError("Choice Connect login control was not found")
         else:
-            _wait_for_okta(session, deadline)
+            initial_surface = _wait_for_okta(session, deadline)
+            _record_transition(
+                transition_recorder,
+                "okta_surface_selected",
+                initial_surface.url,
+                surface=initial_surface.kind,
+            )
             for _ in range(12):
                 if time.monotonic() >= deadline:
                     break
@@ -340,7 +542,9 @@ def login_okta(
                     continue
                 snapshot = _surface_snapshot(session, surface)
                 if _looks_like_challenge(snapshot):
-                    raise BrowserChallenge("Okta presented an access-verification challenge")
+                    raise BrowserChallenge(
+                        "Okta presented an access-verification challenge"
+                    )
                 if snapshot.get("hasUsername"):
                     _fill(session, surface, "username", username)
                     if snapshot.get("hasPassword"):
@@ -348,6 +552,11 @@ def login_okta(
                         submitted_identity = True
                         if not _click_exact(session, surface, "Sign In", "Sign in"):
                             raise OktaLoginError("Okta Sign In control was not found")
+                        _record_transition(
+                            transition_recorder,
+                            "okta_identity_submitted",
+                            snapshot.get("url"),
+                        )
                     elif not _click_exact(session, surface, "Next"):
                         raise OktaLoginError("Okta Next control was not found")
                     time.sleep(0.5)
@@ -357,27 +566,45 @@ def login_okta(
                     submitted_identity = True
                     if not _click_exact(session, surface, "Sign In", "Sign in"):
                         raise OktaLoginError("Okta Sign In control was not found")
+                    _record_transition(
+                        transition_recorder,
+                        "okta_identity_submitted",
+                        snapshot.get("url"),
+                    )
                     time.sleep(0.5)
                     continue
                 if _has_label(snapshot, "Verify with your phone"):
                     if not _click_exact(session, surface, "Verify with your phone"):
-                        raise OktaLoginError("Okta phone verification control was not clickable")
+                        raise OktaLoginError(
+                            "Okta phone verification control was not clickable"
+                        )
                     time.sleep(0.5)
                     continue
                 if _has_label(snapshot, "Receive a code via SMS", "Send me a code"):
                     if sms_requested:
-                        raise OktaLoginError("Okta attempted to request more than one SMS code")
+                        raise OktaLoginError(
+                            "Okta attempted to request more than one SMS code"
+                        )
                     requested_after = time.time()
                     if not _click_exact(
                         session, surface, "Receive a code via SMS", "Send me a code"
                     ):
-                        raise OktaLoginError("Okta SMS request control was not clickable")
+                        raise OktaLoginError(
+                            "Okta SMS request control was not clickable"
+                        )
                     sms_requested = True
+                    _record_transition(
+                        transition_recorder,
+                        "okta_sms_requested",
+                        snapshot.get("url"),
+                    )
                     time.sleep(0.5)
                     continue
                 if snapshot.get("hasOtp"):
                     if not sms_requested:
-                        raise OktaLoginError("Okta requested a code without this run sending SMS")
+                        raise OktaLoginError(
+                            "Okta requested a code without this run sending SMS"
+                        )
                     remaining = min(90.0, max(1.0, deadline - time.monotonic()))
                     try:
                         code = reader.wait_for_code(
@@ -390,15 +617,31 @@ def login_okta(
                     code = ""
                     if not _click_exact(session, surface, "Verify", "Submit"):
                         raise OktaLoginError("Okta verification control was not found")
+                    _record_transition(
+                        transition_recorder,
+                        "okta_otp_submitted",
+                        snapshot.get("url"),
+                    )
                     break
                 if _host(snapshot.get("url")) != OKTA_HOST:
                     break
                 time.sleep(0.5)
             else:
-                raise OktaLoginError("Okta authentication exceeded its bounded step count")
+                raise OktaLoginError(
+                    "Okta authentication exceeded its bounded step count"
+                )
 
-        destination = _wait_for_choice_destination(session, deadline)
+        session = _follow_choice_app_launch(
+            session,
+            cdp_url=cdp_url,
+            before_targets=sso_targets,
+            deadline=deadline,
+            interaction_delay=interaction_delay,
+            recorder=transition_recorder,
+            accept_connect_dashboard=True,
+        )
         snapshot = _snapshot(session)
+        destination = _host(snapshot.get("url"))
         if destination == CONNECT_HOST:
             if not submitted_identity:
                 expected = json.dumps(ops_email.casefold())
@@ -411,42 +654,37 @@ def login_okta(
                     raise OktaLoginError(
                         "existing Choice Connect session identity could not be verified"
                     )
-            before_targets = {
-                str(item.get("id") or item.get("targetId") or "")
-                for item in _list_page_targets(cdp_url)
-            }
-            if not _top_click_exact(session, "Choice Advantage", "ChoiceADVANTAGE"):
-                raise OktaLoginError("Choice Advantage app control was not found")
-            # Prefer same-tab launch; otherwise require one newly-created exact-origin page.
-            for _ in range(80):
-                current = _snapshot(session)
-                if _is_exact_host(current.get("url"), ADVANTAGE_HOST):
-                    break
-                pages = [
-                    item for item in _list_page_targets(cdp_url)
-                    if _is_exact_host(item.get("url"), ADVANTAGE_HOST)
-                    and str(item.get("id") or item.get("targetId") or "") not in before_targets
-                ]
-                if len(pages) == 1:
-                    session.close()
-                    session = CdpSession(
-                        pages[0]["webSocketDebuggerUrl"],
-                        interaction_delay=interaction_delay,
-                    )
-                    session.call("Page.enable")
-                    break
-                if len(pages) > 1:
-                    raise OktaLoginError("Choice Advantage opened multiple new browser targets")
-                time.sleep(0.25)
-            else:
-                raise OktaLoginError("Choice Advantage app did not open")
+            before_targets = {_target_id(item) for item in _list_page_targets(cdp_url)}
+            launch_route = _click_choice_advantage_app(session)
+            _record_transition(
+                transition_recorder,
+                "choice_app_launch_clicked",
+                snapshot.get("url"),
+                route=launch_route,
+            )
+            session = _follow_choice_app_launch(
+                session,
+                cdp_url=cdp_url,
+                before_targets=before_targets,
+                deadline=deadline,
+                interaction_delay=interaction_delay,
+                recorder=transition_recorder,
+            )
 
         session.navigate(REPORTS_URL)
         final = _wait_for_settle(
             session, timeout=min(20, max(1, deadline - time.monotonic()))
         )
         if not _is_authenticated(final):
-            raise OktaLoginError("ChoiceADVANTAGE did not reach the report menu after Okta")
+            raise OktaLoginError(
+                "ChoiceADVANTAGE did not reach the report menu after Okta"
+            )
+        _record_transition(
+            transition_recorder,
+            "choice_reports_ready",
+            final.get("url"),
+            state="choiceadvantage",
+        )
         return {
             "status": "authenticated",
             "session_reused": not submitted_identity,
@@ -454,5 +692,29 @@ def login_okta(
             "auth_mode": "okta_sso",
             "sms_requested": sms_requested,
         }
+    except Exception as exc:
+        try:
+            failed_url = _snapshot(session).get("url")
+        except Exception:
+            failed_url = None
+        _record_transition(
+            transition_recorder,
+            "login_failed",
+            failed_url,
+            error_type=type(exc).__name__,
+        )
+        raise
     finally:
-        session.close()
+        try:
+            closing_url = _snapshot(session).get("url")
+        except Exception:
+            closing_url = None
+        _record_transition(
+            transition_recorder,
+            "cdp_transport_closing",
+            closing_url,
+        )
+        try:
+            session.close()
+        except Exception:
+            pass

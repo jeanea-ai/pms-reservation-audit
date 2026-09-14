@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.pms_access import AccessError, resolve_access
+from scripts.pms_access import AccessError, resolve_access, verify_source_attestation
 
 
 class PmsAccessTests(unittest.TestCase):
@@ -50,6 +50,20 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual("direct_login_no_mfa", access["auth_mode"])
         self.assertEqual(config_before, (self.root / "CAF15.json").read_bytes())
         self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
+        verify_source_attestation(access)
+
+    def test_source_attestation_detects_a_later_shared_file_change(self):
+        self._write_config(
+            {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
+        )
+        self._write_secrets({"CAF15": {"pms_password": "secret"}})
+        access = resolve_access("CAF15", environ={}, config_dir=self.root)
+        config_path = self.root / "CAF15.json"
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload["status"] = "CHANGED_ELSEWHERE"
+        config_path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(AccessError, "changed during the audit"):
+            verify_source_attestation(access)
 
     def test_pms_setup_environment_password_does_not_require_secret_file(self):
         self._write_config(
@@ -199,21 +213,29 @@ class PmsAccessTests(unittest.TestCase):
     def test_pms_setup_3_okta_shape_resolves_identity_at_runtime_without_mutation(self):
         # PMS Setup 3.0 validates this deployed Choice shape. The audit must
         # consume it as-is instead of requiring or writing its richer docs shape.
-        self._write_config(
-            {
-                "vendor": "choice_advantage",
-                "auth_mode": "okta_sso",
-                "okta_mfa": "email",
-                "legacy_username": "KUser.ca307",
-            }
+        config_path = self.root / "CA307.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "property_code": "CA307",
+                    "status": "ACCESS_VERIFIED",
+                    "timezone": "America/Los_Angeles",
+                    "pms": {
+                        "vendor": "choice_advantage",
+                        "auth_mode": "okta_sso",
+                        "okta_mfa": "email",
+                        "legacy_username": "KUser.ca307",
+                    },
+                }
+            ),
+            encoding="utf-8",
         )
-        self._write_secrets({"CAF15": {"pms_password": "secret"}})
-        config_path = self.root / "CAF15.json"
+        self._write_secrets({"CA307": {"pms_password": "secret"}})
         secrets_path = self.root / ".secrets.json"
         config_before = config_path.read_bytes()
         secrets_before = secrets_path.read_bytes()
 
-        access = resolve_access("CAF15", environ={}, config_dir=self.root)
+        access = resolve_access("CA307", environ={}, config_dir=self.root)
 
         self.assertEqual("okta_sso", access["auth_mode"])
         self.assertEqual("email", access["okta_mfa"])
@@ -288,9 +310,7 @@ class PmsAccessTests(unittest.TestCase):
             resolve_access("CAF15", environ={}, config_dir=self.root)
 
     def test_other_vendor_is_refused_without_touching_setup(self):
-        self._write_config(
-            {"vendor": "hotelkey", "username": "hotelkey-user"}
-        )
+        self._write_config({"vendor": "hotelkey", "username": "hotelkey-user"})
         self._write_secrets({"CAF15": {"pms_password": "secret"}})
         with self.assertRaisesRegex(AccessError, "does not support"):
             resolve_access("CAF15", environ={}, config_dir=self.root)
@@ -311,32 +331,51 @@ class PmsAccessTests(unittest.TestCase):
 
     def test_standalone_file_must_be_owner_only_and_match_property(self):
         path = self.root / "test-access.json"
-        path.write_text(json.dumps({
-            "property_code": "CAF15",
-            "username": "KUser.test",
-            "password": "super-secret",
-            "timezone": "America/Los_Angeles",
-        }), encoding="utf-8")
+        path.write_text(
+            json.dumps(
+                {
+                    "property_code": "CAF15",
+                    "username": "KUser.test",
+                    "password": "super-secret",
+                    "timezone": "America/Los_Angeles",
+                }
+            ),
+            encoding="utf-8",
+        )
         path.chmod(0o644)
         with self.assertRaisesRegex(AccessError, "chmod 600"):
-            resolve_access("CAF15", environ={}, allow_test_access=True, test_access_file=path)
+            resolve_access(
+                "CAF15", environ={}, allow_test_access=True, test_access_file=path
+            )
         path.chmod(0o600)
-        access = resolve_access("CAF15", environ={}, allow_test_access=True, test_access_file=path)
+        access = resolve_access(
+            "CAF15", environ={}, allow_test_access=True, test_access_file=path
+        )
         self.assertEqual("standalone-test", access["source"])
         with self.assertRaisesRegex(AccessError, "does not match"):
-            resolve_access("CAA00", environ={}, allow_test_access=True, test_access_file=path)
+            resolve_access(
+                "CAA00", environ={}, allow_test_access=True, test_access_file=path
+            )
 
     def test_standalone_access_rejects_partial_or_invalid_timezone(self):
         with self.assertRaisesRegex(AccessError, "requires protected"):
-            resolve_access("CAF15", environ={
-                "PMS_RECON_TEST_USERNAME": "KUser.test",
-            }, allow_test_access=True)
+            resolve_access(
+                "CAF15",
+                environ={
+                    "PMS_RECON_TEST_USERNAME": "KUser.test",
+                },
+                allow_test_access=True,
+            )
         with self.assertRaisesRegex(AccessError, "valid IANA"):
-            resolve_access("CAF15", environ={
-                "PMS_RECON_TEST_USERNAME": "KUser.test",
-                "PMS_RECON_TEST_PASSWORD": "super-secret",
-                "PMS_RECON_TEST_TIMEZONE": "Not/AZone",
-            }, allow_test_access=True)
+            resolve_access(
+                "CAF15",
+                environ={
+                    "PMS_RECON_TEST_USERNAME": "KUser.test",
+                    "PMS_RECON_TEST_PASSWORD": "super-secret",
+                    "PMS_RECON_TEST_TIMEZONE": "Not/AZone",
+                },
+                allow_test_access=True,
+            )
 
 
 if __name__ == "__main__":

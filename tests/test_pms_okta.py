@@ -6,11 +6,14 @@ from unittest.mock import patch
 from scripts.pms_login import CdpSession, LoginError
 from scripts.pms_okta import (
     ADVANTAGE_HOST,
+    APPS_HOST,
     CONNECT_HOST,
     OktaSurface,
     OktaLoginError,
     _fill,
+    _follow_choice_app_launch,
     _is_exact_host,
+    _navigation_state,
     discover_okta_surface,
     login_okta,
 )
@@ -72,23 +75,29 @@ class PmsOktaTests(unittest.TestCase):
         self.assertEqual("iframe", surface.kind)
         self.assertEqual(91, surface.context_id)
         self.assertIn(
-            ("Page.createIsolatedWorld", {
-                "frameId": "child",
-                "worldName": "pms-okta-audit",
-                "grantUniveralAccess": False,
-            }, None),
+            (
+                "Page.createIsolatedWorld",
+                {
+                    "frameId": "child",
+                    "worldName": "pms-okta-audit",
+                    "grantUniveralAccess": False,
+                },
+                None,
+            ),
             session.calls,
         )
 
     def test_discovers_oopif_and_routes_evaluation_to_its_session(self):
-        attached = [{
-            "session_id": "session-7",
-            "target_info": {
-                "targetId": "child",
-                "type": "iframe",
-                "url": "https://choicehotels.okta.com/signin",
-            },
-        }]
+        attached = [
+            {
+                "session_id": "session-7",
+                "target_info": {
+                    "targetId": "child",
+                    "type": "iframe",
+                    "url": "https://choicehotels.okta.com/signin",
+                },
+            }
+        ]
         session = FakeSession(
             frame(
                 "root",
@@ -102,21 +111,107 @@ class PmsOktaTests(unittest.TestCase):
         surface.evaluate(session, "document.title")
         self.assertEqual("session-7", session.expressions[-1][1]["session_id"])
 
-    def test_refuses_lookalike_origin_and_ambiguous_surfaces(self):
-        self.assertTrue(_is_exact_host("https://choicehotels.okta.com/login", "choicehotels.okta.com"))
-        self.assertFalse(_is_exact_host("http://choicehotels.okta.com/login", "choicehotels.okta.com"))
-        self.assertFalse(_is_exact_host("https://choicehotels.okta.com:444/login", "choicehotels.okta.com"))
-        lookalike = FakeSession(frame("root", "https://choicehotels.okta.com.evil.test"))
+    def test_refuses_lookalike_origin_and_ambiguous_child_surfaces(self):
+        self.assertTrue(
+            _is_exact_host(
+                "https://choicehotels.okta.com/login", "choicehotels.okta.com"
+            )
+        )
+        self.assertFalse(
+            _is_exact_host(
+                "http://choicehotels.okta.com/login", "choicehotels.okta.com"
+            )
+        )
+        self.assertFalse(
+            _is_exact_host(
+                "https://choicehotels.okta.com:444/login", "choicehotels.okta.com"
+            )
+        )
+        lookalike = FakeSession(
+            frame("root", "https://choicehotels.okta.com.evil.test")
+        )
         self.assertIsNone(discover_okta_surface(lookalike))
-        ambiguous = FakeSession(
+        top_with_helper = FakeSession(
             frame(
                 "root",
                 "https://choicehotels.okta.com/login",
                 [frame("child", "https://choicehotels.okta.com/signin")],
             )
         )
+        self.assertEqual("top", discover_okta_surface(top_with_helper).kind)
+        ambiguous = FakeSession(
+            frame(
+                "root",
+                "https://connect.choicehotels.com/login",
+                [
+                    frame("child-1", "https://choicehotels.okta.com/signin"),
+                    frame("child-2", "https://choicehotels.okta.com/verify"),
+                ],
+            )
+        )
         with self.assertRaisesRegex(OktaLoginError, "multiple exact-origin"):
             discover_okta_surface(ambiguous)
+
+    def test_post_mfa_app_link_target_is_followed_from_okta_to_advantage(self):
+        class PageSession:
+            def __init__(self, urls):
+                self.urls = iter(urls)
+                self.current = None
+                self.closed = False
+                self.calls = []
+
+            def snapshot(self):
+                try:
+                    self.current = next(self.urls)
+                except StopIteration:
+                    pass
+                return {"url": self.current}
+
+            def call(self, method, *_args, **_kwargs):
+                self.calls.append(method)
+                return {}
+
+            def close(self):
+                self.closed = True
+
+        original = PageSession(["https://choicehotels.okta.com/signout"])
+        app_link = PageSession(
+            [
+                f"https://{APPS_HOST}/appLinks/choiceAdvantage?token=withheld",
+                f"https://{ADVANTAGE_HOST}/choicehotels/home",
+            ]
+        )
+        target = {
+            "id": "app-link-target",
+            "type": "page",
+            "url": f"https://{APPS_HOST}/appLinks/choiceAdvantage?token=withheld",
+            "webSocketDebuggerUrl": "ws://app-link",
+        }
+        events = []
+        with patch(
+            "scripts.pms_okta._snapshot", side_effect=lambda session: session.snapshot()
+        ), patch("scripts.pms_okta._list_page_targets", return_value=[target]), patch(
+            "scripts.pms_okta.CdpSession", return_value=app_link
+        ):
+            selected = _follow_choice_app_launch(
+                original,
+                cdp_url="http://browser.test",
+                before_targets={"original-target"},
+                deadline=10**12,
+                interaction_delay=0.75,
+                recorder=events.append,
+                accept_connect_dashboard=True,
+            )
+        self.assertIs(selected, app_link)
+        self.assertTrue(original.closed)
+        self.assertEqual("choice_app_link", _navigation_state(target["url"]))
+        self.assertTrue(
+            any(event["event"] == "app_target_selected" for event in events)
+        )
+        self.assertTrue(any(event.get("path") == "/appLinks/…" for event in events))
+        rendered = repr(events)
+        self.assertNotIn("token=", rendered)
+        self.assertNotIn("withheld", rendered)
 
     def test_secret_field_fill_returns_only_presence(self):
         session = FakeSession(frame("root", "https://choicehotels.okta.com/login"))
@@ -130,31 +225,41 @@ class PmsOktaTests(unittest.TestCase):
         session = object.__new__(CdpSession)
         session._events = []
         session._attached_targets = {}
-        session._record_event({
-            "method": "Target.attachedToTarget",
-            "params": {
-                "sessionId": "session-1",
-                "targetInfo": {"targetId": "frame-1", "type": "iframe", "url": "about:blank"},
-            },
-        })
-        session._record_event({
-            "method": "Target.targetInfoChanged",
-            "params": {
-                "targetInfo": {
-                    "targetId": "frame-1",
-                    "type": "iframe",
-                    "url": "https://choicehotels.okta.com/signin",
+        session._record_event(
+            {
+                "method": "Target.attachedToTarget",
+                "params": {
+                    "sessionId": "session-1",
+                    "targetInfo": {
+                        "targetId": "frame-1",
+                        "type": "iframe",
+                        "url": "about:blank",
+                    },
                 },
-            },
-        })
+            }
+        )
+        session._record_event(
+            {
+                "method": "Target.targetInfoChanged",
+                "params": {
+                    "targetInfo": {
+                        "targetId": "frame-1",
+                        "type": "iframe",
+                        "url": "https://choicehotels.okta.com/signin",
+                    },
+                },
+            }
+        )
         self.assertEqual(
             "https://choicehotels.okta.com/signin",
             session.attached_targets()[0]["target_info"]["url"],
         )
-        session._record_event({
-            "method": "Target.detachedFromTarget",
-            "params": {"sessionId": "session-1"},
-        })
+        session._record_event(
+            {
+                "method": "Target.detachedFromTarget",
+                "params": {"sessionId": "session-1"},
+            }
+        )
         self.assertEqual([], session.attached_targets())
 
     def test_one_sms_vertical_slice_reaches_reports(self):
@@ -211,7 +316,12 @@ class PmsOktaTests(unittest.TestCase):
 
         def surface_snapshot(session, _surface):
             states = {
-                "username": {"hasUsername": True, "hasPassword": True, "controls": ["Sign In"], "url": surface.url},
+                "username": {
+                    "hasUsername": True,
+                    "hasPassword": True,
+                    "controls": ["Sign In"],
+                    "url": surface.url,
+                },
                 "phone": {"controls": ["Verify with your phone"], "url": surface.url},
                 "sms": {"controls": ["Receive a code via SMS"], "url": surface.url},
                 "otp": {"hasOtp": True, "controls": ["Verify"], "url": surface.url},
@@ -247,23 +357,41 @@ class PmsOktaTests(unittest.TestCase):
             "ops_email": None,
             "okta_mfa": "email",
         }
-        with patch("scripts.pms_okta._create_page_target", return_value={"webSocketDebuggerUrl": "ws://test"}), \
-                patch("scripts.pms_okta.CdpSession", WorkflowSession), \
-                patch("scripts.pms_okta._wait_for_settle", side_effect=lambda session, **_kwargs: session.snapshot()), \
-                patch("scripts.pms_okta._wait_for_okta", return_value=surface), \
-                patch("scripts.pms_okta.discover_okta_surface", side_effect=lambda session: surface if session.state in {"username", "phone", "sms", "otp"} else None), \
-                patch("scripts.pms_okta._surface_snapshot", side_effect=surface_snapshot), \
-                patch("scripts.pms_okta._top_click_exact", side_effect=top_click), \
-                patch("scripts.pms_okta._click_exact", side_effect=click), \
-                patch("scripts.pms_okta._fill") as fill, \
-                patch("scripts.pms_okta._wait_for_choice_destination", return_value=CONNECT_HOST), \
-                patch("scripts.pms_okta._snapshot", side_effect=lambda session: session.snapshot()), \
-                patch("scripts.pms_okta._list_page_targets", return_value=[]):
+        transitions = []
+        with patch(
+            "scripts.pms_okta._create_page_target",
+            return_value={"webSocketDebuggerUrl": "ws://test"},
+        ), patch("scripts.pms_okta.CdpSession", WorkflowSession), patch(
+            "scripts.pms_okta._wait_for_settle",
+            side_effect=lambda session, **_kwargs: session.snapshot(),
+        ), patch(
+            "scripts.pms_okta._wait_for_okta", return_value=surface
+        ), patch(
+            "scripts.pms_okta.discover_okta_surface",
+            side_effect=lambda session: (
+                surface
+                if session.state in {"username", "phone", "sms", "otp"}
+                else None
+            ),
+        ), patch(
+            "scripts.pms_okta._surface_snapshot", side_effect=surface_snapshot
+        ), patch(
+            "scripts.pms_okta._top_click_exact", side_effect=top_click
+        ), patch(
+            "scripts.pms_okta._click_exact", side_effect=click
+        ), patch(
+            "scripts.pms_okta._fill"
+        ) as fill, patch(
+            "scripts.pms_okta._snapshot", side_effect=lambda session: session.snapshot()
+        ), patch(
+            "scripts.pms_okta._list_page_targets", return_value=[]
+        ):
             result = login_okta(
                 access,
                 cdp_url="http://browser.test",
                 interaction_delay=0.75,
                 otp_reader=reader,
+                transition_recorder=transitions.append,
             )
         session = WorkflowSession.instances[0]
         self.assertEqual("authenticated", result["status"])
@@ -276,6 +404,19 @@ class PmsOktaTests(unittest.TestCase):
             )
         )
         self.assertNotIn("123456", repr(result))
+        ordered = [item["event"] for item in transitions]
+        self.assertLess(
+            ordered.index("okta_identity_submitted"),
+            ordered.index("okta_sms_requested"),
+        )
+        self.assertLess(
+            ordered.index("okta_sms_requested"),
+            ordered.index("okta_otp_submitted"),
+        )
+        self.assertLess(
+            ordered.index("choice_reports_ready"),
+            ordered.index("cdp_transport_closing"),
+        )
 
 
 if __name__ == "__main__":

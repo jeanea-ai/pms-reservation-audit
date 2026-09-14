@@ -1,6 +1,6 @@
 ---
 name: "choiceadvantage-guest-ledger-duplicate-audit"
-version: "0.6.1"
+version: "0.6.2"
 description: >
   Self-contained, on-demand or explicitly scheduled, read-only ChoiceADVANTAGE
   (SkyTouch) audit for guest-ledger
@@ -10,7 +10,7 @@ description: >
   duplicate reservations". Pulls
   fresh PMS data and never edits reservations, folios, accounts, or reports.
 metadata:
-  version: "0.6.1"
+  version: "0.6.2"
 requires: [mf-hotel-pms-setup]
 ---
 
@@ -59,12 +59,24 @@ Both Choice access modes are supported and selected only from PMS Setup:
 
 Never migrate or normalize the shared PMS Setup property or secrets files. Other
 skills consume that data. Compatibility belongs in this audit's read-only
-resolver.
+resolver. The command opens those sources read-only, records byte attestations,
+and fails if either source changes during the audit. Do not run any setup,
+repair, migration, backup, copy, or write command as part of an audit attempt.
 
 Okta DOM discovery supports a top-level page, a same-process iframe, or an
 out-of-process iframe through flattened CDP target attachment. Accept only the
-exact `choicehotels.okta.com` origin and exactly one matching surface. Never
+exact `choicehotels.okta.com` origin. An exact top-level Okta document is
+authoritative even when it contains a same-origin helper iframe; when the
+top-level page is ChoiceConnect, require exactly one matching Okta frame. Never
 fall back to coordinates, screenshots, OCR, or an approximate/foreign origin.
+
+After authentication, permit `connect.choicehotels.com`,
+`choicehotels.okta.com`, and `apps.choicecentral.com` only as transient SSO
+states. Follow a same-tab or uniquely created appLinks page target until the
+final exact `www.choiceadvantage.com` destination. A stable destination outside
+that allow-list fails closed. The command records timestamped origin, path,
+state, redacted path category, and cleanup events in `auth-transitions.jsonl`; it never records query
+strings, titles, page bodies, credentials, cookies, or OTPs.
 
 If PMS Setup exposes only a `pms.password_ref`, stop with the emitted credential
 provider error until the owning skill's resolver is integrated. Never interpret
@@ -163,7 +175,9 @@ credential, renderer, or platform change—not before every audit.
 
 If the command fails or produces an incomplete audit, ask its exact
 `next_question`. Do not retry it in the same turn, hand-edit JSON, inspect guest
-records in chat, or begin open-ended browser experiments.
+records in chat, repair PMS Setup, close browser tabs, or begin open-ended
+browser experiments. Preserve `run-status.json` and `auth-transitions.jsonl`
+for the developer.
 
 ## Authentication and access
 

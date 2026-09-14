@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 from datetime import datetime
+import io
+import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from scripts.pms_login import LoginError
 from scripts.pms_audit_run import (
     AuditTimedOut,
     AuditTerminated,
@@ -15,6 +21,7 @@ from scripts.pms_audit_run import (
     _handle_overall_timeout,
     _new_run_dir,
     _redacted_summary,
+    main,
 )
 
 
@@ -46,6 +53,52 @@ class PmsAuditRunTests(unittest.TestCase):
                 first.close()
             second = _acquire_run_lock(Path(tmp), "CAF15")
             second.close()
+
+    def test_auth_failure_preserves_redacted_transition_and_failed_status(self):
+        access = {
+            "property_code": "CA307",
+            "timezone": "America/Los_Angeles",
+            "auth_mode": "okta_sso",
+            "test_only": False,
+            "_source_attestation": [],
+        }
+
+        def fail_login(_access, **kwargs):
+            kwargs["transition_recorder"](
+                {
+                    "event": "login_failed",
+                    "origin": "https://choicehotels.okta.com",
+                    "path": "/signout/…",
+                }
+            )
+            raise LoginError("controlled authentication failure")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = [
+                "pms_audit_run.py",
+                "--hotel",
+                "CA307",
+                "--output-root",
+                tmp,
+            ]
+            output = io.StringIO()
+            with patch.object(sys, "argv", argv), patch(
+                "scripts.pms_audit_run.resolve_access", return_value=access
+            ), patch(
+                "scripts.pms_audit_run.login", side_effect=fail_login
+            ), redirect_stdout(
+                output
+            ):
+                result_code = main()
+
+            self.assertEqual(2, result_code)
+            result = json.loads(output.getvalue())
+            run_dir = Path(result["run_dir"])
+            status = json.loads((run_dir / "run-status.json").read_text())
+            transition = (run_dir / "auth-transitions.jsonl").read_text()
+            self.assertEqual("failed", status["status"])
+            self.assertEqual("authenticating", status["last_stage"])
+            self.assertIn('"path": "/signout/…"', transition)
 
     def test_failure_has_one_actionable_question(self):
         payload = _failure(
@@ -97,9 +150,7 @@ class PmsAuditRunTests(unittest.TestCase):
         }
         analysis = {
             "counts": {"input": 8, "unique": 7},
-            "windows": {
-                "future_12_months": {"groups_found": 1, "rooms_total": 2}
-            },
+            "windows": {"future_12_months": {"groups_found": 1, "rooms_total": 2}},
         }
         summary = _redacted_summary(payload, analysis)
         self.assertEqual(summary["ledger_balance_total"], 14.75)
