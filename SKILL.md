@@ -42,9 +42,11 @@ Both Choice access modes are supported and selected only from PMS Setup:
 
 - `pms.auth_mode: direct_login_no_mfa` uses `pms.legacy_username` and the
   established PMS password resolver.
-- A verified legacy Choice record that predates `pms.auth_mode` is consumed
-  in memory as `direct_login_no_mfa`. Never write that default back to PMS
-  Setup. An explicit unknown mode still fails closed.
+- A verified legacy Choice record that predates `pms.auth_mode` uses its
+  established top-level `auth_mode_for_reports` value. A still older verified
+  Choice record with neither field is consumed in memory as
+  `direct_login_no_mfa`. Never write either result back to PMS Setup. An
+  explicit unknown mode still fails closed.
 - `pms.auth_mode: okta_sso` consumes either the richer documented identity
   contract or the deployed PMS Setup 3.0 Choice contract without changing it.
   When matching `pms.username` and `identity.ops_email` fields exist, they and
