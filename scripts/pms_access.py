@@ -268,6 +268,8 @@ def resolve_access(
     if vendor not in CHOICE_VENDORS:
         raise AccessError(f"PMS Reconciliation does not support vendor {vendor!r}")
     raw_auth_mode = pms.get("auth_mode")
+    if raw_auth_mode is None or not str(raw_auth_mode).strip():
+        raw_auth_mode = config.get("auth_mode_for_reports")
     auth_mode = str(raw_auth_mode or "").strip().casefold()
     if not auth_mode:
         # PMS Setup intentionally permits older verified Choice records that
