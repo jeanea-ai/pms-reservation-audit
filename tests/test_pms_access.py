@@ -78,6 +78,33 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual(before, config_path.read_bytes())
         verify_source_attestation(access)
 
+    def test_legacy_top_level_report_auth_mode_is_honored_read_only(self):
+        config_path = self.root / "CAF15.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "property_code": "CAF15",
+                    "status": "ACCESS_VERIFIED",
+                    "timezone": "America/Los_Angeles",
+                    "auth_mode_for_reports": "direct_login_no_mfa",
+                    "pms": {
+                        "vendor": "SkyTouch / Choice Advantage",
+                        "legacy_username": "KUser.caf15",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        before = config_path.read_bytes()
+        access = resolve_access(
+            "CAF15",
+            environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+            config_dir=self.root,
+        )
+        self.assertEqual("direct_login_no_mfa", access["auth_mode"])
+        self.assertEqual(before, config_path.read_bytes())
+        verify_source_attestation(access)
+
     def test_explicit_unsupported_auth_mode_is_refused(self):
         self._write_config(
             {
