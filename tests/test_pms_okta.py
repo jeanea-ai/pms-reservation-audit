@@ -13,6 +13,7 @@ from scripts.pms_okta import (
     _fill,
     _follow_choice_app_launch,
     _is_exact_host,
+    _is_okta_auth_url,
     _navigation_state,
     discover_okta_surface,
     login_okta,
@@ -152,6 +153,19 @@ class PmsOktaTests(unittest.TestCase):
         with self.assertRaisesRegex(OktaLoginError, "multiple exact-origin"):
             discover_okta_surface(ambiguous)
 
+    def test_ignores_okta_signout_helper_iframe(self):
+        session = FakeSession(
+            frame(
+                "root",
+                "https://connect.choicehotels.com/login",
+                [frame("child", "https://choicehotels.okta.com/login/signout")],
+            )
+        )
+        self.assertFalse(
+            _is_okta_auth_url("https://choicehotels.okta.com/login/signout")
+        )
+        self.assertIsNone(discover_okta_surface(session))
+
     def test_post_mfa_app_link_target_is_followed_from_okta_to_advantage(self):
         class PageSession:
             def __init__(self, urls):
@@ -212,6 +226,91 @@ class PmsOktaTests(unittest.TestCase):
         rendered = repr(events)
         self.assertNotIn("token=", rendered)
         self.assertNotIn("withheld", rendered)
+
+    def test_post_okta_connect_login_shell_gets_one_bounded_resolution(self):
+        class ConnectSession:
+            def __init__(self):
+                self.url = f"https://{CONNECT_HOST}/login"
+                self.navigations = []
+
+            def snapshot(self):
+                return {"url": self.url}
+
+            def evaluate(self, _expression, **_kwargs):
+                return self.url.endswith("/dashboard")
+
+            def navigate(self, url, **_kwargs):
+                self.navigations.append(url)
+                self.url = f"https://{CONNECT_HOST}/dashboard"
+
+        session = ConnectSession()
+        events = []
+        with patch(
+            "scripts.pms_okta._snapshot", side_effect=lambda current: current.snapshot()
+        ), patch("scripts.pms_okta._list_page_targets", return_value=[]), patch(
+            "scripts.pms_okta._wait_for_settle",
+            side_effect=lambda current, **_kwargs: current.snapshot(),
+        ), patch("scripts.pms_okta.time.sleep"):
+            selected = _follow_choice_app_launch(
+                session,
+                cdp_url="http://browser.test",
+                before_targets={"original-target"},
+                deadline=10**12,
+                interaction_delay=0.75,
+                recorder=events.append,
+                accept_connect_dashboard=True,
+            )
+        self.assertIs(selected, session)
+        self.assertEqual([f"https://{CONNECT_HOST}/"], session.navigations)
+        self.assertEqual(
+            1,
+            sum(
+                event["event"] == "connect_session_resolution_started"
+                for event in events
+            ),
+        )
+
+    def test_post_okta_connect_login_failure_does_not_retry_authentication(self):
+        class LoginSession:
+            def __init__(self):
+                self.navigations = []
+
+            def snapshot(self):
+                return {"url": f"https://{CONNECT_HOST}/login"}
+
+            def evaluate(self, _expression, **_kwargs):
+                return False
+
+            def navigate(self, url, **_kwargs):
+                self.navigations.append(url)
+
+        session = LoginSession()
+        events = []
+        with patch(
+            "scripts.pms_okta._snapshot", side_effect=lambda current: current.snapshot()
+        ), patch("scripts.pms_okta._list_page_targets", return_value=[]), patch(
+            "scripts.pms_okta._wait_for_settle",
+            side_effect=lambda current, **_kwargs: current.snapshot(),
+        ), patch("scripts.pms_okta.time.sleep"):
+            with self.assertRaisesRegex(
+                OktaLoginError, "returned to login after Okta authentication"
+            ):
+                _follow_choice_app_launch(
+                    session,
+                    cdp_url="http://browser.test",
+                    before_targets={"original-target"},
+                    deadline=10**12,
+                    interaction_delay=0.75,
+                    recorder=events.append,
+                    accept_connect_dashboard=True,
+                )
+        self.assertEqual([f"https://{CONNECT_HOST}/"], session.navigations)
+        self.assertTrue(
+            any(
+                event["event"] == "connect_session_not_established"
+                for event in events
+            )
+        )
 
     def test_secret_field_fill_returns_only_presence(self):
         session = FakeSession(frame("root", "https://choicehotels.okta.com/login"))
