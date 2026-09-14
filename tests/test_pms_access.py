@@ -52,6 +52,47 @@ class PmsAccessTests(unittest.TestCase):
         self.assertEqual(secrets_before, (self.root / ".secrets.json").read_bytes())
         verify_source_attestation(access)
 
+    def test_legacy_verified_choice_record_without_auth_mode_is_read_only(self):
+        config_path = self.root / "CAF15.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "property_code": "CAF15",
+                    "status": "ACCESS_VERIFIED",
+                    "timezone": "America/Los_Angeles",
+                    "pms": {
+                        "vendor": "SkyTouch / Choice Advantage",
+                        "legacy_username": "KUser.caf15",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        before = config_path.read_bytes()
+        access = resolve_access(
+            "CAF15",
+            environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+            config_dir=self.root,
+        )
+        self.assertEqual("direct_login_no_mfa", access["auth_mode"])
+        self.assertEqual(before, config_path.read_bytes())
+        verify_source_attestation(access)
+
+    def test_explicit_unsupported_auth_mode_is_refused(self):
+        self._write_config(
+            {
+                "vendor": "choice_advantage",
+                "auth_mode": "invented_mode",
+                "legacy_username": "KUser.caf15",
+            }
+        )
+        with self.assertRaisesRegex(AccessError, "auth_mode is unsupported"):
+            resolve_access(
+                "CAF15",
+                environ={"PMS_PASSWORD_CAF15": "environment-secret"},
+                config_dir=self.root,
+            )
+
     def test_source_attestation_detects_a_later_shared_file_change(self):
         self._write_config(
             {"vendor": "choice_advantage", "legacy_username": "KUser.caf15"}
